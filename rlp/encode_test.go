@@ -18,6 +18,7 @@ package rlp
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,8 @@ import (
 	"math/big"
 	"sync"
 	"testing"
+
+	"github.com/ethereum/go-ethereum/common"
 )
 
 type testEncoder struct {
@@ -351,6 +354,142 @@ func TestEncodeToReader(t *testing.T) {
 		}
 		return ioutil.ReadAll(r)
 	})
+}
+
+type bytes32 [32]byte
+type TransferInSyncPackage struct {
+	Bep2TokenSymbol bytes32
+	ContractAddr    common.Address
+	Amount          big.Int
+	Recipient       common.Address
+	RefundAddr      common.Address
+	ExpireTime      uint64
+}
+
+type BindSyncPackage struct {
+	PackageType     uint8
+	Bep2TokenSymbol bytes32
+	ContractAddr    common.Address
+	TotalSupply     big.Int
+	PeggyAmount     big.Int
+	Bep2eDecimals   uint8
+	ExpireTime      uint64
+}
+
+type TransferOutAckPackage struct {
+	ContractAddr  common.Address
+	RefundAmounts []big.Int
+	RefundAddrs   []common.Address
+	Status        uint32
+}
+
+func TestTokenHubEncode(t *testing.T) {
+	symbol, _ := hex.DecodeString("4142432d39433700000000000000000000000000000000000000000000000000")
+	transInSyncPkg := &TransferInSyncPackage{
+		ContractAddr: common.HexToAddress("0x9B7dFA89A85f71E5a54F10Bc1cA400592878918e"),
+		Amount:       *big.NewInt(1).Mul(big.NewInt(1000000000000000000), big.NewInt(2000000000000000000)),
+		Recipient:    common.HexToAddress("0xfA5E36a04EeF3152092099F352DDbe88953bB540"),
+		RefundAddr:   common.HexToAddress("0xEe9546E92e6876EdF6a234eFFbD72d75360d91f0"),
+		ExpireTime:   1594715271,
+	}
+	copy(transInSyncPkg.Bep2TokenSymbol[:], symbol)
+	encodingResult, err := EncodeToBytes(transInSyncPkg)
+	t.Log(err)
+	t.Log(hex.EncodeToString(encodingResult))
+
+	bindSyncPackage := &BindSyncPackage{
+		PackageType:   1,
+		ContractAddr:  common.HexToAddress("0x0000000000000000000000000000000000001004"),
+		TotalSupply:   *big.NewInt(1).Mul(big.NewInt(1000000000000000000), big.NewInt(1000000000000000000)),
+		PeggyAmount:   *big.NewInt(1).Mul(big.NewInt(500000000000000000), big.NewInt(1000000000000000000)),
+		Bep2eDecimals: 18,
+		ExpireTime:    1594715271,
+	}
+	copy(bindSyncPackage.Bep2TokenSymbol[:], symbol)
+	encodingResult, err = EncodeToBytes(bindSyncPackage)
+	t.Log(err)
+	t.Log(hex.EncodeToString(encodingResult))
+
+	transOutAckPkg := &TransferOutAckPackage{
+		ContractAddr:  common.HexToAddress("0x0000000000000000000000000000000000001004"),
+		RefundAmounts: []big.Int{*big.NewInt(1000000000000000000), *big.NewInt(2000000000000000000)},
+		RefundAddrs:   []common.Address{common.HexToAddress("0xfA5E36a04EeF3152092099F352DDbe88953bB540"), common.HexToAddress("0xEe9546E92e6876EdF6a234eFFbD72d75360d91f0")},
+		Status:        3,
+	}
+	encodingResult, err = EncodeToBytes(transOutAckPkg)
+	t.Log(err)
+	t.Log(hex.EncodeToString(encodingResult))
+}
+
+type TransferOutSyncPackage struct {
+	Bep2TokenSymbol bytes32
+	ContractAddr    common.Address
+	Amounts         []big.Int
+	Recipients      []common.Address
+	RefundAddrs     []common.Address
+	ExpireTime      uint64
+}
+
+type BindAckPackage struct {
+	Bep2TokenSymbol bytes32
+}
+
+type ApproveBindSyncPackage struct {
+	Status          uint32
+	Bep2TokenSymbol bytes32
+}
+
+type TransferInRefundPackage struct {
+	Bep2TokenSymbol bytes32
+	RefundAmount    big.Int
+	RefundAddr      common.Address
+	Status          uint32
+}
+
+func TestTokenHubDecode(t *testing.T) {
+	var transOutSyncPkg TransferOutSyncPackage
+	encodingBytes, _ := hex.DecodeString("f8a4a0424e4200000000000000000000000000000000000000000000000000000000009437b8516a0f88e65d677229b402ec6c1e0e333004d2880de0b6b3a7640000881bc16d674ec80000ea94fa5e36a04eef3152092099f352ddbe88953bb54094ea86e63672613ccba61867a1c30914b6a4cfa57aea94ee9546e92e6876edf6a234effbd72d75360d91f094b9d640ce23c1f8ce9797fd5cd2f0954f9119126f845f0d6c87")
+	err := DecodeBytes(encodingBytes, &transOutSyncPkg)
+	t.Log(err)
+	t.Log(transOutSyncPkg.Bep2TokenSymbol)
+	t.Log(transOutSyncPkg.ContractAddr)
+	t.Log(transOutSyncPkg.Amounts)
+	t.Log(transOutSyncPkg.Recipients)
+	t.Log(transOutSyncPkg.RefundAddrs)
+	t.Log(transOutSyncPkg.ExpireTime)
+
+	var bindAckPackage BindAckPackage
+	encodingBytes, _ = hex.DecodeString("e1a04142432d39433700000000000000000000000000000000000000000000000000")
+	err = DecodeBytes(encodingBytes, &bindAckPackage)
+	t.Log(err)
+	t.Log(bindAckPackage.Bep2TokenSymbol)
+
+	t.Log("------------------------------------------------------")
+	var approveBindSyncPackage ApproveBindSyncPackage
+	encodingBytes, _ = hex.DecodeString("e280a04142432d31323600000000000000000000000000000000000000000000000000")
+	err = DecodeBytes(encodingBytes, &approveBindSyncPackage)
+	t.Log(err)
+	t.Log(approveBindSyncPackage.Status)
+	t.Log(approveBindSyncPackage.Bep2TokenSymbol)
+	t.Log("------------------------------------------------------")
+
+	var transInRefundPackage TransferInRefundPackage
+	encodingBytes, _ = hex.DecodeString("f83da04142432d413039000000000000000000000000000000000000000000000000008502540be400942f5d0ddb94c5f472fc2f1c9f8d439e33e7471af202")
+	err = DecodeBytes(encodingBytes, &transInRefundPackage)
+	t.Log(err)
+	t.Log(transInRefundPackage.Bep2TokenSymbol)
+	t.Log(transInRefundPackage.RefundAmount)
+	t.Log(transInRefundPackage.RefundAddr)
+	t.Log(transInRefundPackage.Status)
+
+	var transferOutAckPackage TransferOutAckPackage
+	encodingBytes, _ = hex.DecodeString("f83a940a2c47f2f266a9de8c2cfc605a53cbee1e347703cd8c9cc79670d35ec9bec0000000d594fa5e36a04eef3152092099f352ddbe88953bb54003")
+	err = DecodeBytes(encodingBytes, &transferOutAckPackage)
+	t.Log(err)
+	t.Log(transferOutAckPackage.ContractAddr.String())
+	t.Log(transferOutAckPackage.RefundAmounts)
+	t.Log(transferOutAckPackage.RefundAddrs)
+	t.Log(transferOutAckPackage.Status)
 }
 
 func TestEncodeToReaderPiecewise(t *testing.T) {
