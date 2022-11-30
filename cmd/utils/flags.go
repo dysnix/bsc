@@ -1937,12 +1937,12 @@ type SetupMetricsOption func()
 func EnableBuildInfo(gitCommit, gitDate string) SetupMetricsOption {
 	return func() {
 		// register build info into metrics
-		metrics.NewRegisteredLabel("build-info", nil).Mark(map[string]interface{}{
+		metrics.NewRegisteredLabel("build_info", nil).Mark(map[string]interface{}{
 			"version":          params.VersionWithMeta,
-			"git-commit":       gitCommit,
-			"git-commit-date":  gitDate,
-			"go-version":       runtime.Version(),
-			"operating-system": runtime.GOOS,
+			"git_commit":       gitCommit,
+			"git_commit_date":  gitDate,
+			"go_version":       runtime.Version(),
+			"operating_system": runtime.GOOS,
 			"architecture":     runtime.GOARCH,
 		})
 	}
