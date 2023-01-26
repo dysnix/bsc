@@ -27,10 +27,10 @@ ENV HOME=${BSC_HOME}
 ENV DATA_DIR=/data
 
 ENV PACKAGES ca-certificates~=20220614-r0 jq~=1.6 \
-  bash~=5.1.16-r2 bind-tools~=9.16.33 tini~=0.19.0 \
+  bash~=5.1.16-r2 bind-tools~=9.16.37-r0 tini~=0.19.0 \
   grep~=3.7 curl~=7.83.1 sed~=4.8-r0
 
-RUN apk add --no-cache $PACKAGES \
+RUN apk add -U --no-cache $PACKAGES \
   && rm -rf /var/cache/apk/* \
   && addgroup -g ${BSC_USER_GID} ${BSC_USER} \
   && adduser -u ${BSC_USER_UID} -G ${BSC_USER} --shell /sbin/nologin --no-create-home -D ${BSC_USER} \
