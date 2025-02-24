@@ -20,13 +20,15 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-#          images: "${IMAGE_NAME}"
+          images: |
+            ghcr.io/${{ github.repository }}
           tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            latest
+            ${{ github.ref_name }}
           labels: |
             org.opencontainers.image.source=${{ secrets.IMAGE_SOURCE }}
             org.opencontainers.image.licenses=LGPL-3.0,GPL-3.0
+            org.opencontainers.image.version={{version}}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
