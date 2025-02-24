@@ -27,6 +27,8 @@ import (
 
 var indices = []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f", "[17]"}
 
+type TrieNode = node
+type TrieFullNode = fullNode
 type node interface {
 	cache() (hashNode, bool)
 	encode(w rlp.EncoderBuffer)
@@ -45,6 +47,27 @@ type (
 	}
 	hashNode  []byte
 	valueNode []byte
+
+	// fullnodeEncoder is a type used exclusively for encoding fullNode.
+	// Briefly instantiating a fullnodeEncoder and initializing with
+	// existing slices is less memory intense than using the fullNode type.
+	fullnodeEncoder struct {
+		Children [17][]byte
+	}
+
+	// extNodeEncoder is a type used exclusively for encoding extension node.
+	// Briefly instantiating a extNodeEncoder and initializing with existing
+	// slices is less memory intense than using the shortNode type.
+	extNodeEncoder struct {
+		Key []byte
+		Val []byte
+	}
+
+	// leafNodeEncoder is a type used exclusively for encoding leaf node.
+	leafNodeEncoder struct {
+		Key []byte
+		Val []byte
+	}
 )
 
 // nilValueNode is used when collapsing internal trie nodes for hashing, since
@@ -89,6 +112,7 @@ func (n *fullNode) fstring(ind string) string {
 	}
 	return resp + fmt.Sprintf("\n%s] ", ind)
 }
+
 func (n *shortNode) fstring(ind string) string {
 	return fmt.Sprintf("{%x: %v} ", n.Key, n.Val.fstring(ind+"  "))
 }
@@ -97,6 +121,11 @@ func (n hashNode) fstring(ind string) string {
 }
 func (n valueNode) fstring(ind string) string {
 	return fmt.Sprintf("%x ", []byte(n))
+}
+
+func NodeString(hash, buf []byte) string {
+	node := mustDecodeNode(hash, buf)
+	return node.fstring("NodeString: ")
 }
 
 // mustDecodeNode is a wrapper of decodeNode and panic if any error is encountered.

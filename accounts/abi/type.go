@@ -64,13 +64,16 @@ type Type struct {
 var (
 	// typeRegex parses the abi sub types
 	typeRegex = regexp.MustCompile("([a-zA-Z]+)(([0-9]+)(x([0-9]+))?)?")
+
+	// sliceSizeRegex grab the slice size
+	sliceSizeRegex = regexp.MustCompile("[0-9]+")
 )
 
 // NewType creates a new reflection type of abi type given in t.
 func NewType(t string, internalType string, components []ArgumentMarshaling) (typ Type, err error) {
 	// check that array brackets are equal if they exist
 	if strings.Count(t, "[") != strings.Count(t, "]") {
-		return Type{}, fmt.Errorf("invalid arg type in abi")
+		return Type{}, errors.New("invalid arg type in abi")
 	}
 	typ.stringKind = t
 
@@ -91,8 +94,7 @@ func NewType(t string, internalType string, components []ArgumentMarshaling) (ty
 		// grab the last cell and create a type from there
 		sliced := t[i:]
 		// grab the slice size with regexp
-		re := regexp.MustCompile("[0-9]+")
-		intz := re.FindAllString(sliced, -1)
+		intz := sliceSizeRegex.FindAllString(sliced, -1)
 
 		if len(intz) == 0 {
 			// is a slice
@@ -109,7 +111,7 @@ func NewType(t string, internalType string, components []ArgumentMarshaling) (ty
 			}
 			typ.stringKind = embeddedType.stringKind + sliced
 		} else {
-			return Type{}, fmt.Errorf("invalid formatting of array type")
+			return Type{}, errors.New("invalid formatting of array type")
 		}
 		return typ, err
 	}
@@ -154,6 +156,9 @@ func NewType(t string, internalType string, components []ArgumentMarshaling) (ty
 		if varSize == 0 {
 			typ.T = BytesTy
 		} else {
+			if varSize > 32 {
+				return Type{}, fmt.Errorf("unsupported arg type: %s", t)
+			}
 			typ.T = FixedBytesTy
 			typ.Size = varSize
 		}
@@ -176,9 +181,6 @@ func NewType(t string, internalType string, components []ArgumentMarshaling) (ty
 				return Type{}, errors.New("abi: purely anonymous or underscored field is not supported")
 			}
 			fieldName := ResolveNameConflict(name, func(s string) bool { return used[s] })
-			if err != nil {
-				return Type{}, err
-			}
 			used[fieldName] = true
 			if !isValidFieldName(fieldName) {
 				return Type{}, fmt.Errorf("field %d has invalid name", idx)
@@ -210,14 +212,19 @@ func NewType(t string, internalType string, components []ArgumentMarshaling) (ty
 		if internalType != "" && strings.HasPrefix(internalType, structPrefix) {
 			// Foo.Bar type definition is not allowed in golang,
 			// convert the format to FooBar
-			typ.TupleRawName = strings.Replace(internalType[len(structPrefix):], ".", "", -1)
+			typ.TupleRawName = strings.ReplaceAll(internalType[len(structPrefix):], ".", "")
 		}
 
 	case "function":
 		typ.T = FunctionTy
 		typ.Size = 24
 	default:
-		return Type{}, fmt.Errorf("unsupported arg type: %s", t)
+		if strings.HasPrefix(internalType, "contract ") {
+			typ.Size = 20
+			typ.T = AddressTy
+		} else {
+			return Type{}, fmt.Errorf("unsupported arg type: %s", t)
+		}
 	}
 
 	return
@@ -345,7 +352,7 @@ func (t Type) pack(v reflect.Value) ([]byte, error) {
 	}
 }
 
-// requireLengthPrefix returns whether the type requires any sort of length
+// requiresLengthPrefix returns whether the type requires any sort of length
 // prefixing.
 func (t Type) requiresLengthPrefix() bool {
 	return t.T == StringTy || t.T == BytesTy || t.T == SliceTy

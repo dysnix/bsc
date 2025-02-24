@@ -31,17 +31,9 @@ type Backend interface {
 }
 
 // MakeProtocols constructs the P2P protocol definitions for `trust`.
-func MakeProtocols(backend Backend, dnsdisc enode.Iterator) []p2p.Protocol {
-	// Filter the discovery iterator for nodes advertising trust support.
-	dnsdisc = enode.Filter(dnsdisc, func(n *enode.Node) bool {
-		var trust enrEntry
-		return n.Load(&trust) == nil
-	})
-
+func MakeProtocols(backend Backend) []p2p.Protocol {
 	protocols := make([]p2p.Protocol, len(ProtocolVersions))
 	for i, version := range ProtocolVersions {
-		version := version // Closure
-
 		protocols[i] = p2p.Protocol{
 			Name:    ProtocolName,
 			Version: version,
@@ -58,8 +50,7 @@ func MakeProtocols(backend Backend, dnsdisc enode.Iterator) []p2p.Protocol {
 			PeerInfo: func(id enode.ID) interface{} {
 				return backend.PeerInfo(id)
 			},
-			Attributes:     []enr.Entry{&enrEntry{}},
-			DialCandidates: dnsdisc,
+			Attributes: []enr.Entry{&enrEntry{}},
 		}
 	}
 	return protocols
@@ -77,7 +68,7 @@ func Handle(backend Backend, peer *Peer) error {
 }
 
 // handleMessage is invoked whenever an inbound message is received from a
-// remote peer on the `diff` protocol. The remote connection is torn down upon
+// remote peer on the `trust` protocol. The remote connection is torn down upon
 // returning any error.
 func handleMessage(backend Backend, peer *Peer) error {
 	// Read the next message from the remote peer, and ensure it's fully consumed
@@ -91,7 +82,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 	defer msg.Discard()
 
 	// Track the amount of time it takes to serve the request and run the handler
-	if metrics.Enabled {
+	if metrics.Enabled() {
 		h := fmt.Sprintf("%s/%s/%d/%#02x", p2p.HandleHistName, ProtocolName, peer.Version(), msg.Code)
 		defer func(start time.Time) {
 			sampler := func() metrics.Sample {

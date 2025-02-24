@@ -17,7 +17,10 @@
 package core
 
 import (
+	"errors"
 	"math/big"
+
+	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -28,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/triedb"
 )
 
 // CurrentHeader retrieves the current head header of the canonical chain. The
@@ -38,14 +42,44 @@ func (bc *BlockChain) CurrentHeader() *types.Header {
 
 // CurrentBlock retrieves the current head block of the canonical chain. The
 // block is retrieved from the blockchain's internal cache.
-func (bc *BlockChain) CurrentBlock() *types.Block {
-	return bc.currentBlock.Load().(*types.Block)
+func (bc *BlockChain) CurrentBlock() *types.Header {
+	return bc.currentBlock.Load()
 }
 
-// CurrentFastBlock retrieves the current fast-sync head block of the canonical
+// CurrentSnapBlock retrieves the current snap-sync head block of the canonical
 // chain. The block is retrieved from the blockchain's internal cache.
-func (bc *BlockChain) CurrentFastBlock() *types.Block {
-	return bc.currentFastBlock.Load().(*types.Block)
+func (bc *BlockChain) CurrentSnapBlock() *types.Header {
+	return bc.currentSnapBlock.Load()
+}
+
+// CurrentFinalBlock retrieves the current finalized block of the canonical
+// chain. The block is retrieved from the blockchain's internal cache.
+func (bc *BlockChain) CurrentFinalBlock() *types.Header {
+	if p, ok := bc.engine.(consensus.PoSA); ok {
+		currentHeader := bc.CurrentHeader()
+		if currentHeader == nil {
+			return nil
+		}
+		return p.GetFinalizedHeader(bc, currentHeader)
+	}
+
+	return nil
+}
+
+// CurrentSafeBlock retrieves the current safe block of the canonical
+// chain. The block is retrieved from the blockchain's internal cache.
+func (bc *BlockChain) CurrentSafeBlock() *types.Header {
+	if p, ok := bc.engine.(consensus.PoSA); ok {
+		currentHeader := bc.CurrentHeader()
+		if currentHeader == nil {
+			return nil
+		}
+		_, justifiedBlockHash, err := p.GetJustifiedNumberAndHash(bc, []*types.Header{currentHeader})
+		if err == nil {
+			return bc.GetHeaderByHash(justifiedBlockHash)
+		}
+	}
+	return nil
 }
 
 // HasHeader checks if a block header is present in the database or not, caching
@@ -66,6 +100,15 @@ func (bc *BlockChain) GetHeaderByHash(hash common.Hash) *types.Header {
 	return bc.hc.GetHeaderByHash(hash)
 }
 
+// GetVerifiedBlockByHash retrieves the header of a verified block, it may be only in memory.
+func (bc *BlockChain) GetVerifiedBlockByHash(hash common.Hash) *types.Header {
+	highestVerifiedBlock := bc.highestVerifiedBlock.Load()
+	if highestVerifiedBlock != nil && highestVerifiedBlock.Hash() == hash {
+		return highestVerifiedBlock
+	}
+	return bc.hc.GetHeaderByHash(hash)
+}
+
 // GetHeaderByNumber retrieves a block header from the database by number,
 // caching it (associated with its hash) if found.
 func (bc *BlockChain) GetHeaderByNumber(number uint64) *types.Header {
@@ -83,8 +126,7 @@ func (bc *BlockChain) GetHeadersFrom(number, count uint64) []rlp.RawValue {
 func (bc *BlockChain) GetBody(hash common.Hash) *types.Body {
 	// Short circuit if the body's already in the cache, retrieve otherwise
 	if cached, ok := bc.bodyCache.Get(hash); ok {
-		body := cached.(*types.Body)
-		return body
+		return cached
 	}
 	number := bc.hc.GetBlockNumber(hash)
 	if number == nil {
@@ -104,7 +146,7 @@ func (bc *BlockChain) GetBody(hash common.Hash) *types.Body {
 func (bc *BlockChain) GetBodyRLP(hash common.Hash) rlp.RawValue {
 	// Short circuit if the body's already in the cache, retrieve otherwise
 	if cached, ok := bc.bodyRLPCache.Get(hash); ok {
-		return cached.(rlp.RawValue)
+		return cached
 	}
 	number := bc.hc.GetBlockNumber(hash)
 	if number == nil {
@@ -123,6 +165,9 @@ func (bc *BlockChain) GetBodyRLP(hash common.Hash) rlp.RawValue {
 func (bc *BlockChain) HasBlock(hash common.Hash, number uint64) bool {
 	if bc.blockCache.Contains(hash) {
 		return true
+	}
+	if !bc.HasHeader(hash, number) {
+		return false
 	}
 	return rawdb.HasBody(bc.db, hash, number)
 }
@@ -143,7 +188,7 @@ func (bc *BlockChain) HasFastBlock(hash common.Hash, number uint64) bool {
 func (bc *BlockChain) GetBlock(hash common.Hash, number uint64) *types.Block {
 	// Short circuit if the block's already in the cache, retrieve otherwise
 	if block, ok := bc.blockCache.Get(hash); ok {
-		return block.(*types.Block)
+		return block
 	}
 	block := rawdb.ReadBlock(bc.db, hash, number)
 	if block == nil {
@@ -195,18 +240,39 @@ func (bc *BlockChain) GetBlocksFromHash(hash common.Hash, n int) (blocks []*type
 // GetReceiptsByHash retrieves the receipts for all transactions in a given block.
 func (bc *BlockChain) GetReceiptsByHash(hash common.Hash) types.Receipts {
 	if receipts, ok := bc.receiptsCache.Get(hash); ok {
-		return receipts.(types.Receipts)
+		return receipts
 	}
 	number := rawdb.ReadHeaderNumber(bc.db, hash)
 	if number == nil {
 		return nil
 	}
-	receipts := rawdb.ReadReceipts(bc.db, hash, *number, bc.chainConfig)
+	header := bc.GetHeader(hash, *number)
+	if header == nil {
+		return nil
+	}
+	receipts := rawdb.ReadReceipts(bc.db, hash, *number, header.Time, bc.chainConfig)
 	if receipts == nil {
 		return nil
 	}
 	bc.receiptsCache.Add(hash, receipts)
 	return receipts
+}
+
+// GetSidecarsByHash retrieves the sidecars for all transactions in a given block.
+func (bc *BlockChain) GetSidecarsByHash(hash common.Hash) types.BlobSidecars {
+	if sidecars, ok := bc.sidecarsCache.Get(hash); ok {
+		return sidecars
+	}
+	number := rawdb.ReadHeaderNumber(bc.db, hash)
+	if number == nil {
+		return nil
+	}
+	sidecars := rawdb.ReadBlobSidecars(bc.db, hash, *number)
+	if sidecars == nil {
+		return nil
+	}
+	bc.sidecarsCache.Add(hash, sidecars)
+	return sidecars
 }
 
 // GetUnclesInChain retrieves all the uncles from a given block backwards until
@@ -234,20 +300,56 @@ func (bc *BlockChain) GetAncestor(hash common.Hash, number, ancestor uint64, max
 	return bc.hc.GetAncestor(hash, number, ancestor, maxNonCanonical)
 }
 
-// GetTransactionLookup retrieves the lookup associate with the given transaction
-// hash from the cache or database.
-func (bc *BlockChain) GetTransactionLookup(hash common.Hash) *rawdb.LegacyTxLookupEntry {
+// GetTransactionLookup retrieves the lookup along with the transaction
+// itself associate with the given transaction hash.
+//
+// An error will be returned if the transaction is not found, and background
+// indexing for transactions is still in progress. The transaction might be
+// reachable shortly once it's indexed.
+//
+// A null will be returned in the transaction is not found and background
+// transaction indexing is already finished. The transaction is not existent
+// from the node's perspective.
+func (bc *BlockChain) GetTransactionLookup(hash common.Hash) (*rawdb.LegacyTxLookupEntry, *types.Transaction, error) {
+	bc.txLookupLock.RLock()
+	defer bc.txLookupLock.RUnlock()
+
 	// Short circuit if the txlookup already in the cache, retrieve otherwise
-	if lookup, exist := bc.txLookupCache.Get(hash); exist {
-		return lookup.(*rawdb.LegacyTxLookupEntry)
+	if item, exist := bc.txLookupCache.Get(hash); exist {
+		return item.lookup, item.transaction, nil
 	}
 	tx, blockHash, blockNumber, txIndex := rawdb.ReadTransaction(bc.db, hash)
 	if tx == nil {
-		return nil
+		progress, err := bc.TxIndexProgress()
+		if err != nil {
+			// No error is returned if the transaction indexing progress is unreachable
+			// due to unexpected internal errors. In such cases, it is impossible to
+			// determine whether the transaction does not exist or has simply not been
+			// indexed yet without a progress marker.
+			//
+			// In such scenarios, the transaction is treated as unreachable, though
+			// this is clearly an unintended and unexpected situation.
+			return nil, nil, nil
+		}
+		// The transaction indexing is not finished yet, returning an
+		// error to explicitly indicate it.
+		if !progress.Done() {
+			return nil, nil, errors.New("transaction indexing still in progress")
+		}
+		// The transaction is already indexed, the transaction is either
+		// not existent or not in the range of index, returning null.
+		return nil, nil, nil
 	}
-	lookup := &rawdb.LegacyTxLookupEntry{BlockHash: blockHash, BlockIndex: blockNumber, Index: txIndex}
-	bc.txLookupCache.Add(hash, lookup)
-	return lookup
+	lookup := &rawdb.LegacyTxLookupEntry{
+		BlockHash:  blockHash,
+		BlockIndex: blockNumber,
+		Index:      txIndex,
+	}
+	bc.txLookupCache.Add(hash, txLookup{
+		lookup:      lookup,
+		transaction: tx,
+	})
+	return lookup, tx, nil
 }
 
 // GetTd retrieves a block's total difficulty in the canonical chain from the
@@ -258,16 +360,19 @@ func (bc *BlockChain) GetTd(hash common.Hash, number uint64) *big.Int {
 
 // HasState checks if state trie is fully present in the database or not.
 func (bc *BlockChain) HasState(hash common.Hash) bool {
-	if bc.stateCache.NoTries() {
-		return bc.snaps != nil && bc.snaps.Snapshot(hash) != nil
-	}
-	if bc.pipeCommit && bc.snaps != nil {
-		// If parent snap is pending on verification, treat it as state exist
-		if s := bc.snaps.Snapshot(hash); s != nil && !s.Verified() {
-			return true
+	if bc.NoTries() {
+		if bc.snaps != nil {
+			return bc.snaps.Snapshot(hash) != nil
 		}
+		// snaps is nil when the blockchain creates
+		found, err := snapshot.PreCheckSnapshot(bc.db, hash)
+		if err != nil {
+			log.Warn("Check HasState in NoTries mode failed", "root", hash, "err", err)
+			return false
+		}
+		return found
 	}
-	_, err := bc.stateCache.OpenTrie(hash)
+	_, err := bc.statedb.OpenTrie(hash)
 	return err == nil
 }
 
@@ -282,38 +387,47 @@ func (bc *BlockChain) HasBlockAndState(hash common.Hash, number uint64) bool {
 	return bc.HasState(block.Root())
 }
 
-// TrieNode retrieves a blob of data associated with a trie node
-// either from ephemeral in-memory cache, or from persistent storage.
-func (bc *BlockChain) TrieNode(hash common.Hash) ([]byte, error) {
-	return bc.stateCache.TrieDB().Node(hash)
-}
-
-// ContractCode retrieves a blob of data associated with a contract hash
-// either from ephemeral in-memory cache, or from persistent storage.
-func (bc *BlockChain) ContractCode(hash common.Hash) ([]byte, error) {
-	return bc.stateCache.ContractCode(common.Hash{}, hash)
+// stateRecoverable checks if the specified state is recoverable.
+// Note, this function assumes the state is not present, because
+// state is not treated as recoverable if it's available, thus
+// false will be returned in this case.
+func (bc *BlockChain) stateRecoverable(root common.Hash) bool {
+	if bc.triedb.Scheme() == rawdb.HashScheme {
+		return false
+	}
+	result, _ := bc.triedb.Recoverable(root)
+	return result
 }
 
 // ContractCodeWithPrefix retrieves a blob of data associated with a contract
 // hash either from ephemeral in-memory cache, or from persistent storage.
-//
-// If the code doesn't exist in the in-memory cache, check the storage with
-// new code scheme.
-func (bc *BlockChain) ContractCodeWithPrefix(hash common.Hash) ([]byte, error) {
-	type codeReader interface {
-		ContractCodeWithPrefix(addrHash, codeHash common.Hash) ([]byte, error)
-	}
-	return bc.stateCache.(codeReader).ContractCodeWithPrefix(common.Hash{}, hash)
+func (bc *BlockChain) ContractCodeWithPrefix(hash common.Hash) []byte {
+	// TODO(rjl493456442) The associated account address is also required
+	// in Verkle scheme. Fix it once snap-sync is supported for Verkle.
+	return bc.statedb.ContractCodeWithPrefix(common.Address{}, hash)
 }
 
 // State returns a new mutable state based on the current HEAD block.
 func (bc *BlockChain) State() (*state.StateDB, error) {
-	return bc.StateAt(bc.CurrentBlock().Root())
+	return bc.StateAt(bc.CurrentBlock().Root)
 }
 
 // StateAt returns a new mutable state based on a particular point in time.
 func (bc *BlockChain) StateAt(root common.Hash) (*state.StateDB, error) {
-	return state.New(root, bc.stateCache, bc.snaps)
+	stateDb, err := state.New(root, bc.statedb)
+	if err != nil {
+		return nil, err
+	}
+
+	// If there's no trie and the specified snapshot is not available, getting
+	// any state will by default return nil.
+	// Instead of that, it will be more useful to return an error to indicate
+	// the state is not available.
+	if stateDb.NoTrie() && stateDb.GetSnap() == nil {
+		return nil, errors.New("state is not available")
+	}
+
+	return stateDb, err
 }
 
 // Config retrieves the chain's fork configuration.
@@ -339,12 +453,12 @@ func (bc *BlockChain) Processor() Processor {
 
 // StateCache returns the caching database underpinning the blockchain instance.
 func (bc *BlockChain) StateCache() state.Database {
-	return bc.stateCache
+	return bc.statedb
 }
 
 // GasLimit returns the gas limit of the current HEAD block.
 func (bc *BlockChain) GasLimit() uint64 {
-	return bc.CurrentBlock().GasLimit()
+	return bc.CurrentBlock().GasLimit
 }
 
 // Genesis retrieves the chain's genesis block.
@@ -352,16 +466,27 @@ func (bc *BlockChain) Genesis() *types.Block {
 	return bc.genesisBlock
 }
 
-// SetTxLookupLimit is responsible for updating the txlookup limit to the
-// original one stored in db if the new mismatches with the old one.
-func (bc *BlockChain) SetTxLookupLimit(limit uint64) {
-	bc.txLookupLimit = limit
+// GenesisHeader retrieves the chain's genesis block header.
+func (bc *BlockChain) GenesisHeader() *types.Header {
+	return bc.genesisBlock.Header()
 }
 
-// TxLookupLimit retrieves the txlookup limit used by blockchain to prune
-// stale transaction indices.
-func (bc *BlockChain) TxLookupLimit() uint64 {
-	return bc.txLookupLimit
+// TxIndexProgress returns the transaction indexing progress.
+func (bc *BlockChain) TxIndexProgress() (TxIndexProgress, error) {
+	if bc.txIndexer == nil {
+		return TxIndexProgress{}, errors.New("tx indexer is not enabled")
+	}
+	return bc.txIndexer.txIndexProgress()
+}
+
+// TrieDB retrieves the low level trie database used for data storage.
+func (bc *BlockChain) TrieDB() *triedb.Database {
+	return bc.triedb
+}
+
+// HeaderChain returns the underlying header chain.
+func (bc *BlockChain) HeaderChain() *HeaderChain {
+	return bc.hc
 }
 
 // SubscribeRemovedLogsEvent registers a subscription of RemovedLogsEvent.
@@ -379,14 +504,14 @@ func (bc *BlockChain) SubscribeChainHeadEvent(ch chan<- ChainHeadEvent) event.Su
 	return bc.scope.Track(bc.chainHeadFeed.Subscribe(ch))
 }
 
+// SubscribeHighestVerifiedHeaderEvent registers a subscription of HighestVerifiedBlockEvent.
+func (bc *BlockChain) SubscribeHighestVerifiedHeaderEvent(ch chan<- HighestVerifiedBlockEvent) event.Subscription {
+	return bc.scope.Track(bc.highestVerifiedBlockFeed.Subscribe(ch))
+}
+
 // SubscribeChainBlockEvent registers a subscription of ChainBlockEvent.
 func (bc *BlockChain) SubscribeChainBlockEvent(ch chan<- ChainHeadEvent) event.Subscription {
 	return bc.scope.Track(bc.chainBlockFeed.Subscribe(ch))
-}
-
-// SubscribeChainSideEvent registers a subscription of ChainSideEvent.
-func (bc *BlockChain) SubscribeChainSideEvent(ch chan<- ChainSideEvent) event.Subscription {
-	return bc.scope.Track(bc.chainSideFeed.Subscribe(ch))
 }
 
 // SubscribeLogsEvent registers a subscription of []*types.Log.
@@ -398,4 +523,18 @@ func (bc *BlockChain) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscript
 // block processing has started while false means it has stopped.
 func (bc *BlockChain) SubscribeBlockProcessingEvent(ch chan<- bool) event.Subscription {
 	return bc.scope.Track(bc.blockProcFeed.Subscribe(ch))
+}
+
+// SubscribeFinalizedHeaderEvent registers a subscription of FinalizedHeaderEvent.
+func (bc *BlockChain) SubscribeFinalizedHeaderEvent(ch chan<- FinalizedHeaderEvent) event.Subscription {
+	return bc.scope.Track(bc.finalizedHeaderFeed.Subscribe(ch))
+}
+
+// AncientTail retrieves the tail the ancients blocks
+func (bc *BlockChain) AncientTail() (uint64, error) {
+	tail, err := bc.db.BlockStore().Tail()
+	if err != nil {
+		return 0, err
+	}
+	return tail, nil
 }

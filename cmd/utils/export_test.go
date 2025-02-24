@@ -1,18 +1,18 @@
 // Copyright 2021 The go-ethereum Authors
 // This file is part of go-ethereum.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Lesser General Public License as published by
+// go-ethereum is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// go-ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU Lesser General Public License for more details.
+// GNU General Public License for more details.
 //
-// You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// You should have received a copy of the GNU General Public License
+// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
 
 package utils
 
@@ -29,18 +29,12 @@ import (
 
 // TestExport does basic sanity checks on the export/import functionality
 func TestExport(t *testing.T) {
-	f := fmt.Sprintf("%v/tempdump", os.TempDir())
-	defer func() {
-		os.Remove(f)
-	}()
+	f := fmt.Sprintf("%v/tempdump", t.TempDir())
 	testExport(t, f)
 }
 
 func TestExportGzip(t *testing.T) {
-	f := fmt.Sprintf("%v/tempdump.gz", os.TempDir())
-	defer func() {
-		os.Remove(f)
-	}()
+	f := fmt.Sprintf("%v/tempdump.gz", t.TempDir())
 	testExport(t, f)
 }
 
@@ -97,22 +91,16 @@ func testExport(t *testing.T, f string) {
 	}
 }
 
-// testDeletion tests if the deletion markers can be exported/imported correctly
+// TestDeletionExport tests if the deletion markers can be exported/imported correctly
 func TestDeletionExport(t *testing.T) {
-	f := fmt.Sprintf("%v/tempdump", os.TempDir())
-	defer func() {
-		os.Remove(f)
-	}()
+	f := fmt.Sprintf("%v/tempdump", t.TempDir())
 	testDeletion(t, f)
 }
 
 // TestDeletionExportGzip tests if the deletion markers can be exported/imported
 // correctly with gz compression.
 func TestDeletionExportGzip(t *testing.T) {
-	f := fmt.Sprintf("%v/tempdump.gz", os.TempDir())
-	defer func() {
-		os.Remove(f)
-	}()
+	f := fmt.Sprintf("%v/tempdump.gz", t.TempDir())
 	testDeletion(t, f)
 }
 
@@ -170,10 +158,8 @@ func testDeletion(t *testing.T, f string) {
 
 // TestImportFutureFormat tests that we reject unsupported future versions.
 func TestImportFutureFormat(t *testing.T) {
-	f := fmt.Sprintf("%v/tempdump-future", os.TempDir())
-	defer func() {
-		os.Remove(f)
-	}()
+	t.Parallel()
+	f := fmt.Sprintf("%v/tempdump-future", t.TempDir())
 	fh, err := os.OpenFile(f, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.ModePerm)
 	if err != nil {
 		t.Fatal(err)

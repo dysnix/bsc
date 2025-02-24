@@ -5,12 +5,11 @@ package logger
 import (
 	"encoding/json"
 
-	"github.com/holiman/uint256"
-
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/holiman/uint256"
 )
 
 var _ = (*structLogMarshaling)(nil)
@@ -24,7 +23,7 @@ func (s StructLog) MarshalJSON() ([]byte, error) {
 		GasCost       math.HexOrDecimal64         `json:"gasCost"`
 		Memory        hexutil.Bytes               `json:"memory,omitempty"`
 		MemorySize    int                         `json:"memSize"`
-		Stack         []uint256.Int               `json:"stack"`
+		Stack         []hexutil.U256              `json:"stack"`
 		ReturnData    hexutil.Bytes               `json:"returnData,omitempty"`
 		Storage       map[common.Hash]common.Hash `json:"-"`
 		Depth         int                         `json:"depth"`
@@ -40,7 +39,12 @@ func (s StructLog) MarshalJSON() ([]byte, error) {
 	enc.GasCost = math.HexOrDecimal64(s.GasCost)
 	enc.Memory = s.Memory
 	enc.MemorySize = s.MemorySize
-	enc.Stack = s.Stack
+	if s.Stack != nil {
+		enc.Stack = make([]hexutil.U256, len(s.Stack))
+		for k, v := range s.Stack {
+			enc.Stack[k] = hexutil.U256(v)
+		}
+	}
 	enc.ReturnData = s.ReturnData
 	enc.Storage = s.Storage
 	enc.Depth = s.Depth
@@ -60,7 +64,7 @@ func (s *StructLog) UnmarshalJSON(input []byte) error {
 		GasCost       *math.HexOrDecimal64        `json:"gasCost"`
 		Memory        *hexutil.Bytes              `json:"memory,omitempty"`
 		MemorySize    *int                        `json:"memSize"`
-		Stack         []uint256.Int               `json:"stack"`
+		Stack         []hexutil.U256              `json:"stack"`
 		ReturnData    *hexutil.Bytes              `json:"returnData,omitempty"`
 		Storage       map[common.Hash]common.Hash `json:"-"`
 		Depth         *int                        `json:"depth"`
@@ -90,7 +94,10 @@ func (s *StructLog) UnmarshalJSON(input []byte) error {
 		s.MemorySize = *dec.MemorySize
 	}
 	if dec.Stack != nil {
-		s.Stack = dec.Stack
+		s.Stack = make([]uint256.Int, len(dec.Stack))
+		for k, v := range dec.Stack {
+			s.Stack[k] = uint256.Int(v)
+		}
 	}
 	if dec.ReturnData != nil {
 		s.ReturnData = *dec.ReturnData

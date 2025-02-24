@@ -53,7 +53,6 @@ func dummyTxArgs(t txtestcase) *apitypes.SendTxArgs {
 	if t.i != "" {
 		a := hexutil.Bytes(common.FromHex(t.i))
 		input = &a
-
 	}
 	return &apitypes.SendTxArgs{
 		From:     *from,
@@ -74,6 +73,7 @@ type txtestcase struct {
 }
 
 func TestTransactionValidation(t *testing.T) {
+	t.Parallel()
 	var (
 		// use empty db, there are other tests for the abi-specific stuff
 		db = newEmpty()

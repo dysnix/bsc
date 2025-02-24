@@ -23,7 +23,9 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 )
@@ -37,6 +39,9 @@ var (
 type ChainHeaderReader interface {
 	// Config retrieves the blockchain's chain configuration.
 	Config() *params.ChainConfig
+
+	// GenesisHeader retrieves the chain's genesis block header.
+	GenesisHeader() *types.Header
 
 	// CurrentHeader retrieves the current header from the local chain.
 	CurrentHeader() *types.Header
@@ -55,6 +60,16 @@ type ChainHeaderReader interface {
 
 	// GetHighestVerifiedHeader retrieves the highest header verified.
 	GetHighestVerifiedHeader() *types.Header
+
+	// GetVerifiedBlockByHash retrieves the highest verified block.
+	GetVerifiedBlockByHash(hash common.Hash) *types.Header
+
+	// ChasingHead return the best chain head of peers.
+	ChasingHead() *types.Header
+}
+
+type VotePool interface {
+	FetchVoteByBlockHash(blockHash common.Hash) []*types.VoteEnvelope
 }
 
 // ChainReader defines a small collection of methods needed to access the local
@@ -74,39 +89,43 @@ type Engine interface {
 	Author(header *types.Header) (common.Address, error)
 
 	// VerifyHeader checks whether a header conforms to the consensus rules of a
-	// given engine. Verifying the seal may be done optionally here, or explicitly
-	// via the VerifySeal method.
-	VerifyHeader(chain ChainHeaderReader, header *types.Header, seal bool) error
+	// given engine.
+	VerifyHeader(chain ChainHeaderReader, header *types.Header) error
 
 	// VerifyHeaders is similar to VerifyHeader, but verifies a batch of headers
 	// concurrently. The method returns a quit channel to abort the operations and
 	// a results channel to retrieve the async verifications (the order is that of
 	// the input slice).
-	VerifyHeaders(chain ChainHeaderReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error)
+	VerifyHeaders(chain ChainHeaderReader, headers []*types.Header) (chan<- struct{}, <-chan error)
 
 	// VerifyUncles verifies that the given block's uncles conform to the consensus
 	// rules of a given engine.
 	VerifyUncles(chain ChainReader, block *types.Block) error
 
+	// VerifyRequests verifies the consistency between Requests and header.RequestsHash.
+	VerifyRequests(header *types.Header, Requests [][]byte) error
+
+	// NextInTurnValidator return the next in-turn validator for header
+	NextInTurnValidator(chain ChainHeaderReader, header *types.Header) (common.Address, error)
+
 	// Prepare initializes the consensus fields of a block header according to the
 	// rules of a particular engine. The changes are executed inline.
 	Prepare(chain ChainHeaderReader, header *types.Header) error
 
-	// Finalize runs any post-transaction state modifications (e.g. block rewards)
-	// but does not assemble the block.
+	// Finalize runs any post-transaction state modifications (e.g. block rewards
+	// or process withdrawals) but does not assemble the block.
 	//
-	// Note: The block header and state database might be updated to reflect any
-	// consensus rules that happen at finalization (e.g. block rewards).
-	Finalize(chain ChainHeaderReader, header *types.Header, state *state.StateDB, txs *[]*types.Transaction,
-		uncles []*types.Header, receipts *[]*types.Receipt, systemTxs *[]*types.Transaction, usedGas *uint64) error
+	// Note: The state database might be updated to reflect any consensus rules
+	// that happen at finalization (e.g. block rewards).
+	Finalize(chain ChainHeaderReader, header *types.Header, state vm.StateDB, txs *[]*types.Transaction,
+		uncles []*types.Header, withdrawals []*types.Withdrawal, receipts *[]*types.Receipt, systemTxs *[]*types.Transaction, usedGas *uint64, tracer *tracing.Hooks) error
 
 	// FinalizeAndAssemble runs any post-transaction state modifications (e.g. block
-	// rewards) and assembles the final block.
+	// rewards or process withdrawals) and assembles the final block.
 	//
 	// Note: The block header and state database might be updated to reflect any
 	// consensus rules that happen at finalization (e.g. block rewards).
-	FinalizeAndAssemble(chain ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction,
-		uncles []*types.Header, receipts []*types.Receipt) (*types.Block, []*types.Receipt, error)
+	FinalizeAndAssemble(chain ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt, tracer *tracing.Hooks) (*types.Block, []*types.Receipt, error)
 
 	// Seal generates a new sealing request for the given input block and pushes
 	// the result into the given channel.
@@ -132,14 +151,6 @@ type Engine interface {
 	Close() error
 }
 
-// PoW is a consensus engine based on proof-of-work.
-type PoW interface {
-	Engine
-
-	// Hashrate returns the current mining hashrate of a PoW consensus engine.
-	Hashrate() float64
-}
-
 type PoSA interface {
 	Engine
 
@@ -147,5 +158,10 @@ type PoSA interface {
 	IsSystemContract(to *common.Address) bool
 	EnoughDistance(chain ChainReader, header *types.Header) bool
 	IsLocalBlock(header *types.Header) bool
-	AllowLightProcess(chain ChainReader, currentHeader *types.Header) bool
+	GetJustifiedNumberAndHash(chain ChainHeaderReader, headers []*types.Header) (uint64, common.Hash, error)
+	GetFinalizedHeader(chain ChainHeaderReader, header *types.Header) *types.Header
+	VerifyVote(chain ChainHeaderReader, vote *types.VoteEnvelope) error
+	IsActiveValidatorAt(chain ChainHeaderReader, header *types.Header, checkVoteKeyFn func(bLSPublicKey *types.BLSPublicKey) bool) bool
+	BlockInterval() uint64
+	NextProposalBlock(chain ChainHeaderReader, header *types.Header, proposer common.Address) (uint64, uint64, error)
 }

@@ -23,15 +23,16 @@ import (
 	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/triedb"
 )
 
 // diskLayer is a low level persistent snapshot built on top of a key-value store.
 type diskLayer struct {
 	diskdb ethdb.KeyValueStore // Key-value store containing the base snapshot
-	triedb *trie.Database      // Trie node cache for reconstruction purposes
+	triedb *triedb.Database    // Trie node cache for reconstruction purposes
 	cache  *fastcache.Cache    // Cache to avoid hitting the disk for direct access
 
 	root  common.Hash // Root hash of the base snapshot
@@ -44,22 +45,19 @@ type diskLayer struct {
 	lock sync.RWMutex
 }
 
+// Release releases underlying resources; specifically the fastcache requires
+// Reset() in order to not leak memory.
+// OBS: It does not invoke Close on the diskdb
+func (dl *diskLayer) Release() error {
+	if dl.cache != nil {
+		dl.cache.Reset()
+	}
+	return nil
+}
+
 // Root returns  root hash for which this snapshot was made.
 func (dl *diskLayer) Root() common.Hash {
 	return dl.root
-}
-
-func (dl *diskLayer) WaitAndGetVerifyRes() bool {
-	return true
-}
-
-func (dl *diskLayer) MarkValid() {}
-
-func (dl *diskLayer) Verified() bool {
-	return true
-}
-
-func (dl *diskLayer) CorrectAccounts(map[common.Hash][]byte) {
 }
 
 // Parent always returns nil as there's no layer below the disk.
@@ -78,13 +76,21 @@ func (dl *diskLayer) Stale() bool {
 
 // Accounts directly retrieves all accounts in current snapshot in
 // the snapshot slim data format.
-func (dl *diskLayer) Accounts() (map[common.Hash]*Account, error) {
+func (dl *diskLayer) Accounts() (map[common.Hash]*types.SlimAccount, error) {
 	return nil, nil
+}
+
+// markStale sets the stale flag as true.
+func (dl *diskLayer) markStale() {
+	dl.lock.Lock()
+	defer dl.lock.Unlock()
+
+	dl.stale = true
 }
 
 // Account directly retrieves the account associated with a particular hash in
 // the snapshot slim data format.
-func (dl *diskLayer) Account(hash common.Hash) (*Account, error) {
+func (dl *diskLayer) Account(hash common.Hash) (*types.SlimAccount, error) {
 	data, err := dl.AccountRLP(hash)
 	if err != nil {
 		return nil, err
@@ -92,7 +98,7 @@ func (dl *diskLayer) Account(hash common.Hash) (*Account, error) {
 	if len(data) == 0 { // can be both nil and []byte{}
 		return nil, nil
 	}
-	account := new(Account)
+	account := new(types.SlimAccount)
 	if err := rlp.DecodeBytes(data, account); err != nil {
 		panic(err)
 	}
@@ -180,6 +186,21 @@ func (dl *diskLayer) Storage(accountHash, storageHash common.Hash) ([]byte, erro
 // Update creates a new layer on top of the existing snapshot diff tree with
 // the specified data items. Note, the maps are retained by the method to avoid
 // copying everything.
-func (dl *diskLayer) Update(blockHash common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, storage map[common.Hash]map[common.Hash][]byte, verified chan struct{}) *diffLayer {
-	return newDiffLayer(dl, blockHash, destructs, accounts, storage, verified)
+func (dl *diskLayer) Update(blockHash common.Hash, accounts map[common.Hash][]byte, storage map[common.Hash]map[common.Hash][]byte) *diffLayer {
+	return newDiffLayer(dl, blockHash, accounts, storage)
+}
+
+// stopGeneration aborts the state snapshot generation if it is currently running.
+func (dl *diskLayer) stopGeneration() {
+	dl.lock.RLock()
+	generating := dl.genMarker != nil
+	dl.lock.RUnlock()
+	if !generating {
+		return
+	}
+	if dl.genAbort != nil {
+		abort := make(chan *generatorStats)
+		dl.genAbort <- abort
+		<-abort
+	}
 }

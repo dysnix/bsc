@@ -17,7 +17,6 @@
 package core
 
 import (
-	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -32,26 +31,24 @@ const checkInterval = 10
 // data from disk before the main block processor start executing.
 type statePrefetcher struct {
 	config *params.ChainConfig // Chain configuration options
-	bc     *BlockChain         // Canonical block chain
-	engine consensus.Engine    // Consensus engine used for block rewards
+	chain  *HeaderChain        // Canonical block chain
 }
 
 // NewStatePrefetcher initialises a new statePrefetcher.
-func NewStatePrefetcher(config *params.ChainConfig, bc *BlockChain, engine consensus.Engine) *statePrefetcher {
+func NewStatePrefetcher(config *params.ChainConfig, chain *HeaderChain) *statePrefetcher {
 	return &statePrefetcher{
 		config: config,
-		bc:     bc,
-		engine: engine,
+		chain:  chain,
 	}
 }
 
 // Prefetch processes the state changes according to the Ethereum rules by running
 // the transaction messages using the statedb, but any changes are discarded. The
-// only goal is to pre-cache transaction signatures and snapshot clean state.
+// only goal is to pre-cache transaction signatures and state trie nodes.
 func (p *statePrefetcher) Prefetch(block *types.Block, statedb *state.StateDB, cfg *vm.Config, interruptCh <-chan struct{}) {
 	var (
 		header = block.Header()
-		signer = types.MakeSigner(p.config, header.Number)
+		signer = types.MakeSigner(p.config, header.Number, header.Time)
 	)
 	transactions := block.Transactions()
 	txChan := make(chan int, prefetchThread)
@@ -59,22 +56,28 @@ func (p *statePrefetcher) Prefetch(block *types.Block, statedb *state.StateDB, c
 	for i := 0; i < prefetchThread; i++ {
 		go func() {
 			newStatedb := statedb.CopyDoPrefetch()
-			newStatedb.EnableWriteOnSharedStorage()
+			if !p.config.IsHertzfix(header.Number) {
+				newStatedb.EnableWriteOnSharedStorage()
+			}
 			gaspool := new(GasPool).AddGas(block.GasLimit())
-			blockContext := NewEVMBlockContext(header, p.bc, nil)
-			evm := vm.NewEVM(blockContext, vm.TxContext{}, statedb, p.config, *cfg)
+			blockContext := NewEVMBlockContext(header, p.chain, nil)
+			evm := vm.NewEVM(blockContext, newStatedb, p.config, *cfg)
 			// Iterate over and process the individual transactions
 			for {
 				select {
 				case txIndex := <-txChan:
 					tx := transactions[txIndex]
 					// Convert the transaction into an executable message and pre-cache its sender
-					msg, err := tx.AsMessageNoNonceCheck(signer)
+					msg, err := TransactionToMessage(tx, signer, header.BaseFee)
+					msg.SkipNonceChecks = true
+					msg.SkipFromEOACheck = true
 					if err != nil {
 						return // Also invalid block, bail out
 					}
-					newStatedb.Prepare(tx.Hash(), txIndex)
-					precacheTransaction(msg, p.config, gaspool, newStatedb, header, evm)
+					newStatedb.SetTxContext(tx.Hash(), txIndex)
+					// We attempt to apply a transaction. The goal is not to execute
+					// the transaction successfully, rather to warm up touched data slots.
+					ApplyMessage(evm, msg, gaspool)
 
 				case <-interruptCh:
 					// If block precaching was interrupted, abort
@@ -97,30 +100,34 @@ func (p *statePrefetcher) Prefetch(block *types.Block, statedb *state.StateDB, c
 // PrefetchMining processes the state changes according to the Ethereum rules by running
 // the transaction messages using the statedb, but any changes are discarded. The
 // only goal is to pre-cache transaction signatures and snapshot clean state. Only used for mining stage
-func (p *statePrefetcher) PrefetchMining(txs *types.TransactionsByPriceAndNonce, header *types.Header, gasLimit uint64, statedb *state.StateDB, cfg vm.Config, interruptCh <-chan struct{}, txCurr **types.Transaction) {
-	var signer = types.MakeSigner(p.config, header.Number)
+func (p *statePrefetcher) PrefetchMining(txs TransactionsByPriceAndNonce, header *types.Header, gasLimit uint64, statedb *state.StateDB, cfg vm.Config, interruptCh <-chan struct{}, txCurr **types.Transaction) {
+	var signer = types.MakeSigner(p.config, header.Number, header.Time)
 
 	txCh := make(chan *types.Transaction, 2*prefetchThread)
 	for i := 0; i < prefetchThread; i++ {
 		go func(startCh <-chan *types.Transaction, stopCh <-chan struct{}) {
 			idx := 0
 			newStatedb := statedb.CopyDoPrefetch()
-			newStatedb.EnableWriteOnSharedStorage()
+			if !p.config.IsHertzfix(header.Number) {
+				newStatedb.EnableWriteOnSharedStorage()
+			}
 			gaspool := new(GasPool).AddGas(gasLimit)
-			blockContext := NewEVMBlockContext(header, p.bc, nil)
-			evm := vm.NewEVM(blockContext, vm.TxContext{}, statedb, p.config, cfg)
+			blockContext := NewEVMBlockContext(header, p.chain, nil)
+			evm := vm.NewEVM(blockContext, newStatedb, p.config, cfg)
 			// Iterate over and process the individual transactions
 			for {
 				select {
 				case tx := <-startCh:
 					// Convert the transaction into an executable message and pre-cache its sender
-					msg, err := tx.AsMessageNoNonceCheck(signer)
+					msg, err := TransactionToMessage(tx, signer, header.BaseFee)
+					msg.SkipNonceChecks = true
+					msg.SkipFromEOACheck = true
 					if err != nil {
 						return // Also invalid block, bail out
 					}
 					idx++
-					newStatedb.Prepare(tx.Hash(), idx)
-					precacheTransaction(msg, p.config, gaspool, newStatedb, header, evm)
+					newStatedb.SetTxContext(tx.Hash(), idx)
+					ApplyMessage(evm, msg, gaspool)
 					gaspool = new(GasPool).AddGas(gasLimit)
 				case <-stopCh:
 					return
@@ -128,7 +135,7 @@ func (p *statePrefetcher) PrefetchMining(txs *types.TransactionsByPriceAndNonce,
 			}
 		}(txCh, interruptCh)
 	}
-	go func(txset *types.TransactionsByPriceAndNonce) {
+	go func(txset TransactionsByPriceAndNonce) {
 		count := 0
 		for {
 			select {
@@ -138,7 +145,7 @@ func (p *statePrefetcher) PrefetchMining(txs *types.TransactionsByPriceAndNonce,
 				if count++; count%checkInterval == 0 {
 					txset.Forward(*txCurr)
 				}
-				tx := txset.Peek()
+				tx := txset.PeekWithUnwrap()
 				if tx == nil {
 					return
 				}
@@ -153,17 +160,4 @@ func (p *statePrefetcher) PrefetchMining(txs *types.TransactionsByPriceAndNonce,
 			}
 		}
 	}(txs)
-}
-
-// precacheTransaction attempts to apply a transaction to the given state database
-// and uses the input parameters for its environment. The goal is not to execute
-// the transaction successfully, rather to warm up touched data slots.
-func precacheTransaction(msg types.Message, config *params.ChainConfig, gaspool *GasPool, statedb *state.StateDB, header *types.Header, evm *vm.EVM) {
-	// Update the evm with the new transaction context.
-	evm.Reset(NewEVMTxContext(msg), statedb)
-	// Add addresses to access list if applicable
-	if _, err := ApplyMessage(evm, msg, gaspool); err == nil {
-		statedb.Finalise(true)
-	}
-
 }

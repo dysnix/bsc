@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"os"
 
-	"gopkg.in/urfave/cli.v1"
+	"github.com/urfave/cli/v2"
 )
 
 // readFile reads the json-data in the provided path and marshals into dest.
@@ -33,7 +33,7 @@ func readFile(path, desc string, dest interface{}) error {
 	defer inFile.Close()
 	decoder := json.NewDecoder(inFile)
 	if err := decoder.Decode(dest); err != nil {
-		return NewError(ErrorJson, fmt.Errorf("failed unmarshaling %s file: %v", desc, err))
+		return NewError(ErrorJson, fmt.Errorf("failed unmarshalling %s file: %v", desc, err))
 	}
 	return nil
 }

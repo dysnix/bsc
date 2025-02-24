@@ -5,20 +5,19 @@ The goal of BNB Smart Chain is to bring programmability and interoperability to 
 BNB Smart Chain starts its development based on go-ethereum fork. So you may see many toolings, binaries and also docs are based on Ethereum ones, such as the name “geth”.
 
 [![API Reference](
-https://camo.githubusercontent.com/915b7be44ada53c290eb157634330494ebe3e30a/68747470733a2f2f676f646f632e6f72672f6769746875622e636f6d2f676f6c616e672f6764646f3f7374617475732e737667
+https://pkg.go.dev/badge/github.com/ethereum/go-ethereum
 )](https://pkg.go.dev/github.com/ethereum/go-ethereum?tab=doc)
 [![Discord](https://img.shields.io/badge/discord-join%20chat-blue.svg)](https://discord.gg/z2VpC455eU)
 
-But from that baseline of EVM compatible, BNB Smart Chain introduces  a system of 21 validators with Proof of Staked Authority (PoSA) consensus that can support short block time and lower fees. The most bonded validator candidates of staking will become validators and produce blocks. The double-sign detection and other slashing logic guarantee security, stability, and chain finality.
+But from that baseline of EVM compatible, BNB Smart Chain introduces a system of 21 validators with Proof of Staked Authority (PoSA) consensus that can support short block time and lower fees. The most bonded validator candidates of staking will become validators and produce blocks. The double-sign detection and other slashing logic guarantee security, stability, and chain finality.
 
-Cross-chain transfer and other communication are possible due to native support of interoperability. Relayers and on-chain contracts are developed to support that. BNB Beacon Chain DEX remains a liquid venue of the exchange of assets on both chains. This dual-chain architecture will be ideal for users to take advantage of the fast trading on one side and build their decentralized apps on the other side. **The BNB Smart Chain** will be:
+**The BNB Smart Chain** will be:
 
 - **A self-sovereign blockchain**: Provides security and safety with elected validators.
 - **EVM-compatible**: Supports all the existing Ethereum tooling along with faster finality and cheaper transaction fees.
-- **Interoperable**: Comes with efficient native dual chain communication; Optimized for scaling high-performance dApps that require fast and smooth user experience.
 - **Distributed with on-chain governance**: Proof of Staked Authority brings in decentralization and community participants. As the native token, BNB will serve as both the gas of smart contract execution and tokens for staking.
 
-More details in [White Paper](https://www.bnbchain.org/en#smartChain).
+More details in [White Paper](https://github.com/bnb-chain/whitepaper/blob/master/WHITEPAPER.md).
 
 ## Key features
 
@@ -34,18 +33,8 @@ To combine DPoS and PoA for consensus, BNB Smart Chain implement a novel consens
 
 1. Blocks are produced by a limited set of validators.
 2. Validators take turns to produce blocks in a PoA manner, similar to Ethereum's Clique consensus engine.
-3. Validator set are elected in and out based on a staking based governance on BNB Beacon Chain.
-4. The validator set change is relayed via a cross-chain communication mechanism.
-5. Parlia consensus engine will interact with a set of [system contracts](https://docs.bnbchain.org/docs/learn/system-contract) to achieve liveness slash, revenue distributing and validator set renewing func.
-
- 
-### Light Client of BNB Beacon Chain
-
-To achieve the cross-chain communication from BNB Beacon Chain to BNB Smart Chain, need introduce a on-chain light client verification algorithm.
-It contains two parts:
-
-1. [Stateless Precompiled contracts](https://github.com/bnb-chain/bsc/blob/master/core/vm/contracts_lightclient.go) to do tendermint header verification and Merkle Proof verification.
-2. [Stateful solidity contracts](https://github.com/bnb-chain/bsc-genesis-contract/blob/master/contracts/TendermintLightClient.sol) to store validator set and trusted appHash.  
+3. Validator set are elected in and out based on a staking based governance on BNB Smart Chain.
+4. Parlia consensus engine will interact with a set of [system contracts](https://docs.bnbchain.org/bnb-smart-chain/staking/overview/#system-contracts) to achieve liveness slash, revenue distributing and validator set renewing func.
 
 ## Native Token
 
@@ -53,7 +42,6 @@ BNB will run on BNB Smart Chain in the same way as ETH runs on Ethereum so that 
 BNB will be used to:
 
 1. pay `gas` to deploy or invoke Smart Contract on BSC
-2. perform cross-chain operations, such as transfer token assets across BNB Smart Chain and BNB Beacon Chain.
 
 ## Building the source
 
@@ -61,7 +49,7 @@ Many of the below are the same as or similar to go-ethereum.
 
 For prerequisites and detailed build instructions please read the [Installation Instructions](https://geth.ethereum.org/docs/getting-started/installing-geth).
 
-Building `geth` requires both a Go (version 1.18 or later) and a C compiler. You can install
+Building `geth` requires both a Go (version 1.22 or later) and a C compiler (GCC 5 or higher). You can install
 them using your favourite package manager. Once the dependencies are installed, run
 
 ```shell
@@ -72,6 +60,16 @@ or, to build the full suite of utilities:
 
 ```shell
 make all
+```
+
+If you get such error when running the node with self built binary:
+```shell
+Caught SIGILL in blst_cgo_init, consult <blst>/bindinds/go/README.md.
+```
+please try to add the following environment variables and build again:
+```shell
+export CGO_CFLAGS="-O -D__BLST_PORTABLE__" 
+export CGO_CFLAGS_ALLOW="-O -D__BLST_PORTABLE__"
 ```
 
 ## Executables
@@ -87,7 +85,7 @@ directory.
 |  `abigen`  | Source code generator to convert Ethereum contract definitions into easy to use, compile-time type-safe Go packages. It operates on plain [Ethereum contract ABIs](https://docs.soliditylang.org/en/develop/abi-spec.html) with expanded functionality if the contract bytecode is also available. However, it also accepts Solidity source files, making development much more streamlined. Please see our [Native DApps](https://geth.ethereum.org/docs/dapp/native-bindings) page for details.                                                                                               |
 | `bootnode` | Stripped down version of our Ethereum client implementation that only takes part in the network node discovery protocol, but does not run any of the higher level application protocols. It can be used as a lightweight bootstrap node to aid in finding peers in private networks.                                                                                                                                                                                                                                                                                                            |
 |   `evm`    | Developer utility version of the EVM (Ethereum Virtual Machine) that is capable of running bytecode snippets within a configurable environment and execution mode. Its purpose is to allow isolated, fine-grained debugging of EVM opcodes (e.g. `evm --code 60ff60ff --debug run`).                                                                                                                                                                                                                                                                                                            |
-| `rlpdump`  | Developer utility tool to convert binary RLP ([Recursive Length Prefix](https://eth.wiki/en/fundamentals/rlp)) dumps (data encoding used by the Ethereum protocol both network as well as consensus wise) to user-friendlier hierarchical representation (e.g. `rlpdump --hex CE0183FFFFFFC4C304050583616263`).                                                                                                                                                                                                                                                                                 |
+| `rlpdump`  | Developer utility tool to convert binary RLP ([Recursive Length Prefix](https://ethereum.org/en/developers/docs/data-structures-and-encoding/rlp)) dumps (data encoding used by the Ethereum protocol both network as well as consensus wise) to user-friendlier hierarchical representation (e.g. `rlpdump --hex CE0183FFFFFFC4C304050583616263`).                                                                                                                                                                                                                                                                                 |
 
 ## Running `geth`
 
@@ -100,15 +98,15 @@ on how you can run your own `geth` instance.
 
 The hardware must meet certain requirements to run a full node on mainnet:
 - VPS running recent versions of Mac OS X, Linux, or Windows.
-- IMPORTANT 2 TB of free disk space, solid-state drive(SSD), gp3, 8k IOPS, 250 MB/S throughput, read latency <1ms. (if node is started with snap sync, it will need NVMe SSD)
+- IMPORTANT 3 TB(Dec 2023) of free disk space, solid-state drive(SSD), gp3, 8k IOPS, 500 MB/S throughput, read latency <1ms. (if node is started with snap sync, it will need NVMe SSD)
 - 16 cores of CPU and 64 GB of memory (RAM)
-- Suggest m5zn.3xlarge instance type on AWS, c2-standard-16 on Google cloud.
+- Suggest m5zn.6xlarge or r7iz.4xlarge instance type on AWS, c2-standard-16 on Google cloud.
 - A broadband Internet connection with upload/download speeds of 5 MB/S
 
 The requirement for testnet:
 - VPS running recent versions of Mac OS X, Linux, or Windows.
 - 500G of storage for testnet.
-- 4 cores of CPU and 8 gigabytes of memory (RAM).
+- 4 cores of CPU and 16 gigabytes of memory (RAM).
 
 ### Steps to Run a Fullnode
 
@@ -121,14 +119,19 @@ chmod -v u+x geth
 
 # MacOS
 wget $(curl -s https://api.github.com/repos/bnb-chain/bsc/releases/latest |grep browser_ |grep geth_mac |cut -d\" -f4)
-mv geth_mac geth
+mv geth_macos geth
 chmod -v u+x geth
 ```
 
 #### 2. Download the config files
 ```shell
+//== mainnet
 wget $(curl -s https://api.github.com/repos/bnb-chain/bsc/releases/latest |grep browser_ |grep mainnet |cut -d\" -f4)
 unzip mainnet.zip
+
+//== testnet
+wget $(curl -s https://api.github.com/repos/bnb-chain/bsc/releases/latest |grep browser_ |grep testnet |cut -d\" -f4)
+unzip testnet.zip
 ```
 
 #### 3. Download snapshot
@@ -136,10 +139,11 @@ Download latest chaindata snapshot from [here](https://github.com/bnb-chain/bsc-
 
 #### 4. Start a full node
 ```shell
-./geth --config ./config.toml --datadir ./node  --cache 8000 --rpc.allow-unprotected-txs --txlookuplimit 0
+## It will run with Path-Base Storage Scheme by default and enable inline state prune, keeping the latest 90000 blocks' history state.
+./geth --config ./config.toml --datadir ./node  --cache 8000 --rpc.allow-unprotected-txs --history.transactions 0
 
-## It is recommand to run fullnode with `--tries-verify-mode none` if you want high performance and care little about state consistency
-./geth --config ./config.toml --datadir ./node  --cache 8000 --rpc.allow-unprotected-txs --txlookuplimit 0 --tries-verify-mode none
+## It is recommend to run fullnode with `--tries-verify-mode none` if you want high performance and care little about state consistency.
+./geth --config ./config.toml --datadir ./node  --cache 8000 --rpc.allow-unprotected-txs --history.transactions 0 --tries-verify-mode none
 ```
 
 #### 5. Monitor node status
@@ -161,11 +165,11 @@ This tool is optional and if you leave it out you can always attach to an alread
 
 #### 7. More
 
-More details about [running a node](https://docs.bnbchain.org/docs/validator/fullnode) and [becoming a validator](https://docs.bnbchain.org/docs/validator/create-val)
+More details about [running a node](https://docs.bnbchain.org/bnb-smart-chain/developers/node_operators/full_node/) and [becoming a validator](https://docs.bnbchain.org/bnb-smart-chain/validator/create-val/)
 
-*Note: Although there are some internal protective measures to prevent transactions from
-crossing over between the main network and test network, you should make sure to always
-use separate accounts for play-money and real-money. Unless you manually move
+*Note: Although some internal protective measures prevent transactions from
+crossing over between the main network and test network, you should always
+use separate accounts for play and real money. Unless you manually move
 accounts, `geth` will by default correctly separate the two networks and will not make any
 accounts available between them.*
 
@@ -178,7 +182,7 @@ configuration file via:
 $ geth --config /path/to/your_config.toml
 ```
 
-To get an idea how the file should look like you can use the `dumpconfig` subcommand to
+To get an idea of how the file should look like you can use the `dumpconfig` subcommand to
 export your existing configuration:
 
 ```shell
@@ -201,19 +205,18 @@ you'd expect.
 
 HTTP based JSON-RPC API options:
 
-* `--http` Enable the HTTP-RPC server
-* `--http.addr` HTTP-RPC server listening interface (default: `localhost`)
-* `--http.port` HTTP-RPC server listening port (default: `8545`)
-* `--http.api` API's offered over the HTTP-RPC interface (default: `eth,net,web3`)
-* `--http.corsdomain` Comma separated list of domains from which to accept cross origin requests (browser enforced)
-* `--ws` Enable the WS-RPC server
-* `--ws.addr` WS-RPC server listening interface (default: `localhost`)
-* `--ws.port` WS-RPC server listening port (default: `8546`)
-* `--ws.api` API's offered over the WS-RPC interface (default: `eth,net,web3`)
-* `--ws.origins` Origins from which to accept WebSocket requests
-* `--ipcdisable` Disable the IPC-RPC server
-* `--ipcapi` API's offered over the IPC-RPC interface (default: `admin,debug,eth,miner,net,personal,txpool,web3`)
-* `--ipcpath` Filename for IPC socket/pipe within the datadir (explicit paths escape it)
+  * `--http` Enable the HTTP-RPC server
+  * `--http.addr` HTTP-RPC server listening interface (default: `localhost`)
+  * `--http.port` HTTP-RPC server listening port (default: `8545`)
+  * `--http.api` API's offered over the HTTP-RPC interface (default: `eth,net,web3`)
+  * `--http.corsdomain` Comma separated list of domains from which to accept cross-origin requests (browser enforced)
+  * `--ws` Enable the WS-RPC server
+  * `--ws.addr` WS-RPC server listening interface (default: `localhost`)
+  * `--ws.port` WS-RPC server listening port (default: `8546`)
+  * `--ws.api` API's offered over the WS-RPC interface (default: `eth,net,web3`)
+  * `--ws.origins` Origins from which to accept WebSocket requests
+  * `--ipcdisable` Disable the IPC-RPC server
+  * `--ipcpath` Filename for IPC socket/pipe within the datadir (explicit paths escape it)
 
 You'll need to use your own programming environments' capabilities (libraries, tools, etc) to
 connect via HTTP, WS or IPC to a `geth` node configured with the above flags and you'll
@@ -227,12 +230,39 @@ running web servers, so malicious web pages could try to subvert locally availab
 APIs!**
 
 ### Operating a private network
-- [BSC-Deploy](https://github.com/bnb-chain/node-deploy/): deploy tool for setting up both BNB Beacon Chain, BNB Smart Chain and the cross chain infrastructure between them.
-- [BSC-Docker](https://github.com/bnb-chain/bsc-docker): deploy tool for setting up local BSC cluster in container.
+- [BSC-Deploy](https://github.com/bnb-chain/node-deploy/): deploy tool for setting up BNB Smart Chain.
+
+## Running a bootnode
+
+Bootnodes are super-lightweight nodes that are not behind a NAT and are running just discovery protocol. When you start up a node it should log your enode, which is a public identifier that others can use to connect to your node. 
+
+First the bootnode requires a key, which can be created with the following command, which will save a key to boot.key:
+
+```
+bootnode -genkey boot.key
+```
+
+This key can then be used to generate a bootnode as follows:
+
+```
+bootnode -nodekey boot.key -addr :30311 -network bsc
+```
+
+The choice of port passed to -addr is arbitrary. 
+The bootnode command returns the following logs to the terminal, confirming that it is running:
+
+```
+enode://3063d1c9e1b824cfbb7c7b6abafa34faec6bb4e7e06941d218d760acdd7963b274278c5c3e63914bd6d1b58504c59ec5522c56f883baceb8538674b92da48a96@127.0.0.1:0?discport=30311
+Note: you're using cmd/bootnode, a developer tool.
+We recommend using a regular node as bootstrap node for production deployments.
+INFO [08-21|11:11:30.687] New local node record                    seq=1,692,616,290,684 id=2c9af1742f8f85ce ip=<nil> udp=0 tcp=0
+INFO [08-21|12:11:30.753] New local node record                    seq=1,692,616,290,685 id=2c9af1742f8f85ce ip=54.217.128.118 udp=30311 tcp=0
+INFO [09-01|02:46:26.234] New local node record                    seq=1,692,616,290,686 id=2c9af1742f8f85ce ip=34.250.32.100  udp=30311 tcp=0
+```
 
 ## Contribution
 
-Thank you for considering to help out with the source code! We welcome contributions
+Thank you for considering helping out with the source code! We welcome contributions
 from anyone on the internet, and are grateful for even the smallest of fixes!
 
 If you'd like to contribute to bsc, please fork, fix, commit and send a pull request
@@ -252,7 +282,7 @@ Please make sure your contributions adhere to our coding guidelines:
  * Commit messages should be prefixed with the package(s) they modify.
    * E.g. "eth, rpc: make trace configs optional"
 
-Please see the [Developers' Guide](https://geth.ethereum.org/docs/developers)
+Please see the [Developers' Guide](https://geth.ethereum.org/docs/developers/geth-developer/dev-guide)
 for more details on configuring your environment, managing project dependencies, and
 testing procedures.
 

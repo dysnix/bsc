@@ -18,9 +18,13 @@ package rawdb
 
 import (
 	"fmt"
+	"math"
 	"sync/atomic"
 
-	"github.com/ethereum/go-ethereum/common/math"
+	"time"
+
+	"golang.org/x/exp/slices"
+
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/golang/snappy"
 )
@@ -34,7 +38,7 @@ type freezerBatch struct {
 	tables map[string]*freezerTableBatch
 }
 
-func newFreezerBatch(f *freezer) *freezerBatch {
+func newFreezerBatch(f *Freezer) *freezerBatch {
 	batch := &freezerBatch{tables: make(map[string]*freezerTableBatch, len(f.tables))}
 	for kind, table := range f.tables {
 		batch.tables[kind] = table.newBatch(f.offset)
@@ -65,6 +69,10 @@ func (batch *freezerBatch) commit() (item uint64, writeSize int64, err error) {
 	// Check that count agrees on all batches.
 	item = uint64(math.MaxUint64)
 	for name, tb := range batch.tables {
+		// skip empty addition tables
+		if slices.Contains(additionTables, name) && EmptyTable(tb.t) {
+			continue
+		}
 		if item < math.MaxUint64 && tb.curItem != item {
 			return 0, 0, fmt.Errorf("table %s is at item %d, want %d", name, tb.curItem, item)
 		}
@@ -111,7 +119,7 @@ func (t *freezerTable) newBatch(offset uint64) *freezerTableBatch {
 func (batch *freezerTableBatch) reset() {
 	batch.dataBuffer = batch.dataBuffer[:0]
 	batch.indexBuffer = batch.indexBuffer[:0]
-	curItem := batch.t.items + batch.offset
+	curItem := batch.t.items.Load() + batch.offset
 	batch.curItem = atomic.LoadUint64(&curItem)
 	batch.totalBytes = 0
 }
@@ -186,9 +194,10 @@ func (batch *freezerTableBatch) maybeCommit() error {
 	return nil
 }
 
-// commit writes the batched items to the backing freezerTable.
+// commit writes the batched items to the backing freezerTable. Note index
+// file isn't fsync'd after the file write, the recent write can be lost
+// after the power failure.
 func (batch *freezerTableBatch) commit() error {
-	// Write data.
 	_, err := batch.t.head.Write(batch.dataBuffer)
 	if err != nil {
 		return err
@@ -196,7 +205,6 @@ func (batch *freezerTableBatch) commit() error {
 	dataSize := int64(len(batch.dataBuffer))
 	batch.dataBuffer = batch.dataBuffer[:0]
 
-	// Write index.
 	_, err = batch.t.index.Write(batch.indexBuffer)
 	if err != nil {
 		return err
@@ -207,11 +215,17 @@ func (batch *freezerTableBatch) commit() error {
 	// Update headBytes of table.
 	batch.t.headBytes += dataSize
 	items := batch.curItem - batch.offset
-	atomic.StoreUint64(&batch.t.items, items)
+	batch.t.items.Store(items)
 
 	// Update metrics.
 	batch.t.sizeGauge.Inc(dataSize + indexSize)
 	batch.t.writeMeter.Mark(dataSize + indexSize)
+
+	// Periodically sync the table, todo (rjl493456442) make it configurable?
+	if time.Since(batch.t.lastSync) > 30*time.Second {
+		batch.t.lastSync = time.Now()
+		return batch.t.Sync()
+	}
 	return nil
 }
 
