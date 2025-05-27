@@ -24,7 +24,7 @@ ENV CGO_CFLAGS="-O -D__BLST_PORTABLE__"
 ENV CGO_CFLAGS_ALLOW="-O -D__BLST_PORTABLE__"
 ENV GOOS=${TARGETOS}
 ENV GOARCH=${TARGETARCH}
-RUN cd /go-ethereum && go run build/ci.go install -static ./cmd/geth
+RUN cd /go-ethereum && go run build/ci.go install -static -arch=${GOARCH} ./cmd/geth
 
 # Pull Geth into a second stage deploy alpine container
 FROM --platform=${TARGETPLATFORM:-linux/amd64} alpine:3.21
