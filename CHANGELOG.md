@@ -1,4 +1,124 @@
 # Changelog
+## v1.5.13
+### FEATURE
+[\#3019](https://github.com/bnb-chain/bsc/pull/3019) BEP-524: Short Block Interval Phase Two: 0.75 seconds
+[\#3044](https://github.com/bnb-chain/bsc/pull/3044) params: double FullImmutabilityThreshold for BEP-520 & BEP-524
+[\#3045](https://github.com/bnb-chain/bsc/pull/3045) Feature: StakeHub Contract Interface Implementation
+[\#3040](https://github.com/bnb-chain/bsc/pull/3040) bsc: add new block fetching mechanism
+[\#3043](https://github.com/bnb-chain/bsc/pull/3043) p2p: support new msg broadcast features
+[\#3070](https://github.com/bnb-chain/bsc/pull/3070) chore: renaming for evn and some optmization
+[\#3073](https://github.com/bnb-chain/bsc/pull/3073) evn: add support for node id removal
+[\#3072](https://github.com/bnb-chain/bsc/pull/3072) config: support more evn configuration in tool
+[\#3075](https://github.com/bnb-chain/bsc/pull/3075) config: apply two default miner option
+[\#3083](https://github.com/bnb-chain/bsc/pull/3083) evn: improve node ID management with better error handling
+[\#3084](https://github.com/bnb-chain/bsc/pull/3084) metrics: add more monitor metrics for EVN
+[\#3087](https://github.com/bnb-chain/bsc/pull/3087) bsc2: fix block sidecar fetching issue
+[\#3090](https://github.com/bnb-chain/bsc/pull/3090) chore: update maxwell contrats addresses
+[\#3091](https://github.com/bnb-chain/bsc/pull/3091) chore: fix several occasional issues for EVN
+[\#3049](https://github.com/bnb-chain/bsc/pull/3049) upstream: pick bugfix and feature from latest geth v1.5.9
+[\#3096](https://github.com/bnb-chain/bsc/pull/3096) config: update BSC Testnet hardfork time: Maxwell
+
+### BUGFIX
+[\#3050](https://github.com/bnb-chain/bsc/pull/3050) miner: fix memory leak caused by no discard env
+[\#3061](https://github.com/bnb-chain/bsc/pull/3061) p2p: fix bscExt checking logic
+
+### IMPROVEMENT
+[\#3034](https://github.com/bnb-chain/bsc/pull/3034) miner: optimize clear up logic for envs
+[\#3039](https://github.com/bnb-chain/bsc/pull/3039) Revert "miner: limit block size to eth protocol msg size (#2696)"
+[\#3041](https://github.com/bnb-chain/bsc/pull/3041) feat: add json-rpc-api.md
+[\#3057](https://github.com/bnb-chain/bsc/pull/3057) eth/protocols/bsc: adjust vote reception limit
+[\#3067](https://github.com/bnb-chain/bsc/pull/3067) ethclient/gethclient: add deduplication and max keys limit to GetProof
+[\#3063](https://github.com/bnb-chain/bsc/pull/3063) rpc: add method name length limit and configurable message size limit
+[\#3077](https://github.com/bnb-chain/bsc/pull/3077) performance: track large tx execution cost
+[\#3074](https://github.com/bnb-chain/bsc/pull/3074) jsutils: add tool GetLargeTxs
+[\#3082](https://github.com/bnb-chain/bsc/pull/3082) metrics: optimize mev metrics
+[\#3081](https://github.com/bnb-chain/bsc/pull/3081) miner: reset recommit timer on new block
+[\#3062](https://github.com/bnb-chain/bsc/pull/3062) refactor: use slices.Contains to simplify code
+[\#3088](https://github.com/bnb-chain/bsc/pull/3088) core/vote: change waiting blocks for voting since start mining
+[\#3089](https://github.com/bnb-chain/bsc/pull/3089) core/systemcontracts: remove lorentz/rialto
+[\#3085](https://github.com/bnb-chain/bsc/pull/0000) miner: fix goroutine leak
+
+## v1.5.12
+### BUGFIX
+[\#3057](https://github.com/bnb-chain/bsc/pull/3057) eth/protocols/bsc: adjust vote reception limit
+
+## v1.5.11
+### FEATURE
+[\#3008](https://github.com/bnb-chain/bsc/pull/3008) params: add MaxwellTime
+[\#3025](https://github.com/bnb-chain/bsc/pull/3025) config.toml: default value of [Eth.Miner] and [Eth.Miner.Mev]
+[\#3026](https://github.com/bnb-chain/bsc/pull/3026) mev: include MaxBidsPerBuilder in MevParams
+[\#3027](https://github.com/bnb-chain/bsc/pull/3027) mev: update two default mev paramater for 1.5s block interval
+
+### BUGFIX
+[\#3007](https://github.com/bnb-chain/bsc/pull/3007) metrics: fix panic for cocurrently accessing label
+
+### IMPROVEMENT
+[\#3006](https://github.com/bnb-chain/bsc/pull/3006) jsutil: update getKeyParameters
+[\#3018](https://github.com/bnb-chain/bsc/pull/3018) nancy: update nancy ignore
+[\#3021](https://github.com/bnb-chain/bsc/pull/3021) chore: remove duplicate package imports
+
+## v1.5.10
+### FEATURE
+[\#3015](https://github.com/bnb-chain/bsc/pull/3015) config: update BSC Mainnet hardfork time: Lorentz
+
+### BUGFIX
+NA
+
+### IMPROVEMENT
+[\#2985](https://github.com/bnb-chain/bsc/pull/2985) core: clearup pascal&prague testflag and rialto code
+
+## v1.5.9
+### FEATURE
+[\#2932](https://github.com/bnb-chain/bsc/pull/2932) BEP-520: Short Block Interval Phase One: 1.5 seconds
+[\#2991](https://github.com/bnb-chain/bsc/pull/2991) config: update BSC Testnet hardfork time: Lorentz
+
+### BUGFIX
+[\#2990](https://github.com/bnb-chain/bsc/pull/2990) core/state: fix concurrent map read and write for stateUpdate.accounts
+
+### IMPROVEMENT
+[\#2933](https://github.com/bnb-chain/bsc/pull/2933) metrics: add more peer, block/vote metrics
+[\#2938](https://github.com/bnb-chain/bsc/pull/2938) cmd/geth: add example for geth bls account generate-proof
+[\#2949](https://github.com/bnb-chain/bsc/pull/2949) metrics: add more block/vote stats;
+[\#2948](https://github.com/bnb-chain/bsc/pull/2948) go.mod: update crypto to solve CVE-2025-22869
+[\#2960](https://github.com/bnb-chain/bsc/pull/2960) pool: debug log instead of warn
+[\#2961](https://github.com/bnb-chain/bsc/pull/2961) metric: add more block monitor metrics;
+[\#2992](https://github.com/bnb-chain/bsc/pull/2992) core/systemcontracts: update url for lorentz hardfork
+[\#2993](https://github.com/bnb-chain/bsc/pull/2993) cmd/jsutils: add tool GetMevStatus
+
+## v1.5.8
+### FEATURE
+* [\#2955](https://github.com/bnb-chain/bsc/pull/2955) pbs: enable GreedyMergeTx by default
+
+### BUGFIX
+* [\#2967](https://github.com/bnb-chain/bsc/pull/2967) fix: gas compare in bid simulator
+
+### IMPROVEMENT
+* [\#2951](https://github.com/bnb-chain/bsc/pull/2951) bump golang.org/x/net from 0.34.0 to 0.36.0
+* [\#0000](https://github.com/bnb-chain/bsc/pull/0000) golang: upgrade toolchain to v1.23.0 (commit:3be156eec)
+* [\#2957](https://github.com/bnb-chain/bsc/pull/2957) miner: stop GreedyMergeTx before worker picking bids
+* [\#2959](https://github.com/bnb-chain/bsc/pull/2959) pbs: fix a inaccurate bid result log
+* [\#2971](https://github.com/bnb-chain/bsc/pull/2971) mev: no interrupt if it is too later
+* [\#2974](https://github.com/bnb-chain/bsc/pull/2974) miner: add metrics for bid simulation
+
+## v1.5.7
+v1.5.7 conduct small upstream code merge to follow the latest pectra hard fork and apply some bug fix. There are two PR for the code merge:
+* [\#2897](https://github.com/bnb-chain/bsc/pull/2897) upstream: merge tag 'geth-v1.15.1' into bsc-develop
+* [\#2926](https://github.com/bnb-chain/bsc/pull/2926) upstream: pick bug fix from latest geth
+
+Besides code merge, there are also several important bugfix/improvements, and setup mainnet Pascal hard fork time:
+### FEATURE
+* [\#2928](https://github.com/bnb-chain/bsc/pull/2928) config: update BSC Mainnet hardfork date: Pascal & Praque
+
+### BUGFIX
+* [\#2907](https://github.com/bnb-chain/bsc/pull/0000) go.mod: downgrade bls-eth-go-binary to make it same as the prysm-v5.0.0
+
+### IMPROVEMENT
+* [\#2896](https://github.com/bnb-chain/bsc/pull/2896) consensus/parlia: estimate gas reserved for systemTxs
+* [\#2912](https://github.com/bnb-chain/bsc/pull/2912) consensus/parlia: improve performance of func IsSystemTransaction
+* [\#2916](https://github.com/bnb-chain/bsc/pull/2916) miner: avoid to collect requests when getting pending blocks
+* [\#2913](https://github.com/bnb-chain/bsc/pull/2913) core/vm: add basic test cases for blsSignatureVerify
+* [\#2918](https://github.com/bnb-chain/bsc/pull/2918) core/txpool/legacypool/legacypool.go: add gasTip check when reset
+
 ## v1.5.6
 v1.5.6 performed another small code sync with Geth upstream, mainly sync the 7702 tx type txpool update, refer: https://github.com/bnb-chain/bsc/pull/2888/
 
@@ -76,7 +196,7 @@ _in bsc, this feature only enabled with multi-database_
 
 #### New EIPs
 [core/vm: enable bls-precompiles for Prague (](https://github.com/ethereum/go-ethereum/commit/823719b9e1b72174cd8245ae9e6f6f7d7072a8d6)[#29552](https://github.com/ethereum/go-ethereum/pull/29552)[)](https://github.com/ethereum/go-ethereum/commit/823719b9e1b72174cd8245ae9e6f6f7d7072a8d6)
-[EIP-2935: Serve historical block hashes from state](https://eips.ethereum.org/EIPS/eip-2935) ([#29465](https://github.com/ethereum/go-ethereum/pull/29465))
+[EIP-2935: Serve historical block hashes from state](https://eips.ethereum.org/EIPS/eip-2935) ([#29465](https://github.com/ethereum/go-ethereum/pull/29465))
 
 #### Clear Up
 [eth, eth/downloader: remove references to LightChain, LightSync (#29711)](https://github.com/ethereum/go-ethereum/pull/29711)

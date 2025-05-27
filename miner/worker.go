@@ -69,18 +69,15 @@ const (
 	// the current 4 mining loops could have asynchronous risk of mining block with
 	// save height, keep recently mined blocks to avoid double sign for safety,
 	recentMinedCacheLimit = 20
-
-	// the default to wait for the mev miner to finish
-	waitMEVMinerEndTimeLimit = 50 * time.Millisecond
-
-	// Reserve block size for the following 3 components:
-	// a. System transactions at the end of the block
-	// b. Seal in the block header
-	// c. Overhead from RLP encoding
-	blockReserveSize = 100 * 1024
 )
 
 var (
+	bidExistGauge        = metrics.NewRegisteredGauge("worker/bidExist", nil)
+	bidWinGauge          = metrics.NewRegisteredGauge("worker/bidWin", nil)
+	inturnBlocksGauge    = metrics.NewRegisteredGauge("worker/inturnBlocks", nil)
+	bestBidGasUsedGauge  = metrics.NewRegisteredGauge("worker/bestBidGasUsed", nil)  // MGas
+	bestWorkGasUsedGauge = metrics.NewRegisteredGauge("worker/bestWorkGasUsed", nil) // MGas
+
 	writeBlockTimer    = metrics.NewRegisteredTimer("worker/writeblock", nil)
 	finalizeBlockTimer = metrics.NewRegisteredTimer("worker/finalizeblock", nil)
 
@@ -97,7 +94,6 @@ type environment struct {
 	signer   types.Signer
 	state    *state.StateDB // apply state changes here
 	tcount   int            // tx count in cycle
-	size     uint32         // almost accurate block size,
 	gasPool  *core.GasPool  // available gas used to pack transactions
 	coinbase common.Address
 	evm      *vm.EVM
@@ -117,7 +113,6 @@ func (env *environment) copy() *environment {
 		signer:   env.signer,
 		state:    env.state.Copy(),
 		tcount:   env.tcount,
-		size:     env.size,
 		coinbase: env.coinbase,
 		header:   types.CopyHeader(env.header),
 		receipts: copyReceipts(env.receipts),
@@ -154,6 +149,8 @@ type task struct {
 	state     *state.StateDB
 	block     *types.Block
 	createdAt time.Time
+
+	miningStartAt time.Time
 }
 
 const (
@@ -285,7 +282,10 @@ func newWorker(config *minerconfig.Config, engine consensus.Engine, eth Backend,
 	worker.chainHeadSub = eth.BlockChain().SubscribeChainHeadEvent(worker.chainHeadCh)
 
 	// Sanitize recommit interval if the user-specified one is too short.
-	recommit := worker.config.Recommit
+	recommit := minRecommitInterval
+	if worker.config.Recommit != nil && *worker.config.Recommit > minRecommitInterval {
+		recommit = *worker.config.Recommit
+	}
 	if recommit < minRecommitInterval {
 		log.Warn("Sanitizing miner recommit interval", "provided", recommit, "updated", minRecommitInterval)
 		recommit = minRecommitInterval
@@ -450,15 +450,22 @@ func (w *worker) newWorkLoop(recommit time.Duration) {
 			if !w.isRunning() {
 				continue
 			}
+			if interruptCh != nil {
+				interruptCh <- commitInterruptNewHead
+				close(interruptCh)
+				interruptCh = nil
+			}
 			clearPending(head.Header.Number.Uint64())
 			timestamp = time.Now().Unix()
 			if p, ok := w.engine.(*parlia.Parlia); ok {
 				signedRecent, err := p.SignRecently(w.chain, head.Header)
 				if err != nil {
+					timer.Reset(recommit)
 					log.Debug("Not allowed to propose block", "err", err)
 					continue
 				}
 				if signedRecent {
+					timer.Reset(recommit)
 					log.Info("Signed recently, must wait")
 					continue
 				}
@@ -469,7 +476,7 @@ func (w *worker) newWorkLoop(recommit time.Duration) {
 			// If sealing is running resubmit a new work cycle periodically to pull in
 			// higher priced transactions. Disable this overhead for pending blocks.
 			if w.isRunning() && ((w.chainConfig.Clique != nil &&
-				w.chainConfig.Clique.Period > 0) || (w.chainConfig.Parlia != nil && w.chainConfig.Parlia.Period > 0)) {
+				w.chainConfig.Clique.Period > 0) || (w.chainConfig.Parlia != nil)) {
 				// Short circuit if no new transaction arrives.
 				commit(commitInterruptResubmit)
 			}
@@ -663,6 +670,9 @@ func (w *worker) resultLoop() {
 				continue
 			}
 			writeBlockTimer.UpdateSince(start)
+			stats := w.chain.GetBlockStats(block.Hash())
+			stats.SendBlockTime.Store(time.Now().UnixMilli())
+			stats.StartMiningTime.Store(task.miningStartAt.UnixMilli())
 			log.Info("Successfully sealed new block", "number", block.Number(), "sealhash", sealhash, "hash", hash,
 				"elapsed", common.PrettyDuration(time.Since(task.createdAt)))
 			w.mux.Post(core.NewMinedBlockEvent{Block: block})
@@ -790,7 +800,11 @@ func (w *worker) commitTransactions(env *environment, plainTxs, blobTxs *transac
 	gasLimit := env.header.GasLimit
 	if env.gasPool == nil {
 		env.gasPool = new(core.GasPool).AddGas(gasLimit)
-		env.gasPool.SubGas(params.SystemTxsGas)
+		if p, ok := w.engine.(*parlia.Parlia); ok {
+			gasReserved := p.EstimateGasReservedForSystemTxs(w.chain, env.header)
+			env.gasPool.SubGas(gasReserved)
+			log.Debug("commitTransactions", "number", env.header.Number.Uint64(), "time", env.header.Time, "EstimateGasReservedForSystemTxs", gasReserved)
+		}
 	}
 
 	var coalescedLogs []*types.Log
@@ -800,6 +814,7 @@ func (w *worker) commitTransactions(env *environment, plainTxs, blobTxs *transac
 		processorCapacity = plainTxs.CurrentSize()
 	}
 	bloomProcessors := core.NewAsyncReceiptBloomGenerator(processorCapacity)
+	defer bloomProcessors.Close()
 
 	stopPrefetchCh := make(chan struct{})
 	defer close(stopPrefetchCh)
@@ -905,13 +920,6 @@ LOOP:
 			txs.Pop()
 			continue
 		}
-		// If we don't have enough size left for the next transaction, skip it.
-		if env.size+uint32(tx.Size())+blockReserveSize > params.MaxMessageSize {
-			log.Trace("Not enough size left for transaction", "hash", ltx.Hash,
-				"env.size", env.size, "needed", uint32(tx.Size()))
-			txs.Pop()
-			continue
-		}
 		// Error may be ignored here. The error has already been checked
 		// during transaction acceptance in the transaction pool.
 		from, _ := types.Sender(env.signer, tx)
@@ -937,7 +945,6 @@ LOOP:
 			// Everything ok, collect the logs and shift in the next transaction from the same account
 			coalescedLogs = append(coalescedLogs, logs...)
 			env.tcount++
-			env.size += uint32(tx.Size()) // size of BlobTxSidecar included
 			txs.Shift()
 
 		default:
@@ -947,7 +954,6 @@ LOOP:
 			txs.Pop()
 		}
 	}
-	bloomProcessors.Close()
 	if !w.isRunning() && len(coalescedLogs) > 0 {
 		// We don't push the pendingLogsEvent while we are sealing. The reason is that
 		// when we are sealing, the worker will regenerate a sealing block every 3 seconds.
@@ -1063,7 +1069,7 @@ func (w *worker) prepareWork(genParams *generateParams, witness bool) (*environm
 		return nil, err
 	}
 
-	// Handle upgrade build-in system contract code
+	// Handle upgrade built-in system contract code
 	systemcontracts.TryUpdateBuildInSystemContract(w.chainConfig, header.Number, parent.Time, header.Time, env.state, true)
 
 	if header.ParentBeaconRoot != nil {
@@ -1073,9 +1079,6 @@ func (w *worker) prepareWork(genParams *generateParams, witness bool) (*environm
 	if w.chainConfig.IsPrague(header.Number, header.Time) {
 		core.ProcessParentBlockHash(header.ParentHash, env.evm)
 	}
-
-	env.size = uint32(env.header.Size())
-
 	return env, nil
 }
 
@@ -1170,7 +1173,7 @@ func (w *worker) generateWork(params *generateParams, witness bool) *newPayloadR
 
 	if !params.noTxs {
 		interrupt := new(atomic.Int32)
-		timer := time.AfterFunc(w.config.Recommit, func() {
+		timer := time.AfterFunc(*w.config.Recommit, func() {
 			interrupt.Store(commitInterruptTimeout)
 		})
 		defer timer.Stop()
@@ -1187,7 +1190,7 @@ func (w *worker) generateWork(params *generateParams, witness bool) *newPayloadR
 	}
 	// Collect consensus-layer requests if Prague is enabled.
 	var requests [][]byte
-	if w.chainConfig.IsPrague(work.header.Number, work.header.Time) {
+	if w.chainConfig.IsPrague(work.header.Number, work.header.Time) && w.chainConfig.Parlia == nil {
 		requests = [][]byte{}
 		// EIP-6110 deposits
 		if err := core.ParseDepositLogs(&requests, allLogs, w.chainConfig); err != nil {
@@ -1275,7 +1278,7 @@ LOOP:
 		prevWork = work
 		workList = append(workList, work)
 
-		delay := w.engine.Delay(w.chain, work.header, &w.config.DelayLeftOver)
+		delay := w.engine.Delay(w.chain, work.header, w.config.DelayLeftOver)
 		if delay == nil {
 			log.Warn("commitWork delay is nil, something is wrong")
 			stopTimer = nil
@@ -1284,7 +1287,7 @@ LOOP:
 			break
 		} else {
 			log.Debug("commitWork stopTimer", "block", work.header.Number,
-				"header time", time.Until(time.Unix(int64(work.header.Time), 0)),
+				"header time", time.UnixMilli(int64(work.header.MilliTimestamp())),
 				"commit delay", *delay, "DelayLeftOver", w.config.DelayLeftOver)
 			stopTimer.Reset(*delay)
 		}
@@ -1328,7 +1331,7 @@ LOOP:
 		newTxsNum := 0
 		// stopTimer was the maximum delay for each fillTransactions
 		// but now it is used to wait until (head.Time - DelayLeftOver) is reached.
-		stopTimer.Reset(time.Until(time.Unix(int64(work.header.Time), 0)) - w.config.DelayLeftOver)
+		stopTimer.Reset(time.Until(time.UnixMilli(int64(work.header.MilliTimestamp()))) - *w.config.DelayLeftOver)
 	LOOP_WAIT:
 		for {
 			select {
@@ -1339,7 +1342,7 @@ LOOP:
 				log.Debug("commitWork interruptCh closed, new block imported or resubmit triggered")
 				return
 			case ev := <-txsCh:
-				delay := w.engine.Delay(w.chain, work.header, &w.config.DelayLeftOver)
+				delay := w.engine.Delay(w.chain, work.header, w.config.DelayLeftOver)
 				log.Debug("commitWork txsCh arrived", "fillDuration", fillDuration.String(),
 					"delay", delay.String(), "work.tcount", work.tcount,
 					"newTxsNum", newTxsNum, "len(ev.Txs)", len(ev.Txs))
@@ -1389,13 +1392,13 @@ LOOP:
 
 	// when out-turn, use bestWork to prevent bundle leakage.
 	// when in-turn, compare with remote work.
-	from := bestWork.coinbase
 	if w.bidFetcher != nil && bestWork.header.Difficulty.Cmp(diffInTurn) == 0 {
+		inturnBlocksGauge.Inc(1)
 		// We want to start sealing the block as late as possible here if mev is enabled, so we could give builder the chance to send their final bid.
 		// Time left till sealing the block.
-		tillSealingTime := time.Until(time.Unix(int64(bestWork.header.Time), 0)) - w.config.DelayLeftOver
-		if tillSealingTime > max(100*time.Millisecond, w.config.DelayLeftOver) {
-			// Still a lot of time left, wait for the best bid.
+		tillSealingTime := time.Until(time.UnixMilli(int64(bestWork.header.MilliTimestamp()))) - *w.config.DelayLeftOver
+		if tillSealingTime > 0 {
+			// Still some time left, wait for the best bid.
 			// This happens during the peak time of the network, the local block building LOOP would break earlier than
 			// the final sealing time by meeting the errBlockInterruptedByOutOfGas criteria.
 
@@ -1409,18 +1412,13 @@ LOOP:
 			}
 		}
 
-		if pendingBid := w.bidFetcher.GetSimulatingBid(bestWork.header.ParentHash); pendingBid != nil {
-			waitBidTimer := time.NewTimer(waitMEVMinerEndTimeLimit)
-			defer waitBidTimer.Stop()
-			select {
-			case <-waitBidTimer.C:
-			case <-pendingBid.finished:
-			}
-		}
-
 		bestBid := w.bidFetcher.GetBestBid(bestWork.header.ParentHash)
 
 		if bestBid != nil {
+			bidExistGauge.Inc(1)
+			bestBidGasUsedGauge.Update(int64(bestBid.bid.GasUsed) / 1_000_000)
+			bestWorkGasUsedGauge.Update(int64(bestWork.header.GasUsed) / 1_000_000)
+
 			log.Debug("BidSimulator: final compare", "block", bestWork.header.Number.Uint64(),
 				"localBlockReward", bestReward.String(),
 				"bidBlockReward", bestBid.packedBlockReward.String())
@@ -1428,7 +1426,7 @@ LOOP:
 
 		if bestBid != nil && bestReward.CmpBig(bestBid.packedBlockReward) < 0 {
 			// localValidatorReward is the reward for the validator self by the local block.
-			localValidatorReward := new(uint256.Int).Mul(bestReward, uint256.NewInt(w.config.Mev.ValidatorCommission))
+			localValidatorReward := new(uint256.Int).Mul(bestReward, uint256.NewInt(*w.config.Mev.ValidatorCommission))
 			localValidatorReward.Div(localValidatorReward, uint256.NewInt(10000))
 
 			log.Debug("BidSimulator: final compare", "block", bestWork.header.Number.Uint64(),
@@ -1437,12 +1435,13 @@ LOOP:
 
 			// blockReward(benefits delegators) and validatorReward(benefits the validator) are both optimal
 			if localValidatorReward.CmpBig(bestBid.packedValidatorReward) < 0 {
+				bidWinGauge.Inc(1)
+
 				bestWork = bestBid.env
-				from = bestBid.bid.Builder
 
 				log.Info("[BUILDER BLOCK]",
 					"block", bestWork.header.Number.Uint64(),
-					"builder", from,
+					"builder", bestBid.bid.Builder,
 					"blockReward", weiToEtherStringF6(bestBid.packedBlockReward),
 					"validatorReward", weiToEtherStringF6(bestBid.packedValidatorReward),
 					"bid", bestBid.bid.Hash().TerminalString(),
@@ -1450,8 +1449,6 @@ LOOP:
 			}
 		}
 	}
-
-	metrics.GetOrRegisterCounter(fmt.Sprintf("block/from/%v", from), nil).Inc(1)
 
 	w.commit(bestWork, w.fullTaskHook, true, start)
 
@@ -1505,7 +1502,7 @@ func (w *worker) commit(env *environment, interval func(), update bool, start ti
 		block = block.WithSidecars(env.sidecars)
 
 		select {
-		case w.taskCh <- &task{receipts: receipts, state: env.state, block: block, createdAt: time.Now()}:
+		case w.taskCh <- &task{receipts: receipts, state: env.state, block: block, createdAt: time.Now(), miningStartAt: start}:
 			log.Info("Commit new sealing work", "number", block.Number(), "sealhash", w.engine.SealHash(block.Header()),
 				"txs", env.tcount, "blobs", env.blobs, "gas", block.GasUsed(), "fees", feesInEther, "elapsed", common.PrettyDuration(time.Since(start)))
 
@@ -1536,33 +1533,37 @@ func (w *worker) getSealingBlock(params *generateParams) *newPayloadResult {
 }
 
 func (w *worker) tryWaitProposalDoneWhenStopping() {
-	posa, ok := w.engine.(consensus.PoSA)
-	// if the consensus is not PoSA, just skip waiting
+	parlia, ok := w.engine.(*parlia.Parlia)
+	// if the consensus is not parlia, just skip waiting
 	if !ok {
 		return
 	}
 
 	currentHeader := w.chain.CurrentBlock()
 	currentBlock := currentHeader.Number.Uint64()
-	startBlock, endBlock, err := posa.NextProposalBlock(w.chain, currentHeader, w.coinbase)
+	startBlock, endBlock, err := parlia.NextProposalBlock(w.chain, currentHeader, w.coinbase)
 	if err != nil {
 		log.Warn("Failed to get next proposal block, skip waiting", "err", err)
 		return
 	}
 
 	log.Info("Checking miner's next proposal block", "current", currentBlock,
-		"proposalStart", startBlock, "proposalEnd", endBlock, "maxWait", w.config.MaxWaitProposalInSecs)
+		"proposalStart", startBlock, "proposalEnd", endBlock, "maxWait", *w.config.MaxWaitProposalInSecs)
 	if endBlock <= currentBlock {
 		log.Warn("next proposal end block has passed, ignore")
 		return
 	}
-	if startBlock > currentBlock && (startBlock-currentBlock)*posa.BlockInterval() > w.config.MaxWaitProposalInSecs {
+	blockInterval, err := parlia.BlockInterval(w.chain, currentHeader)
+	if err != nil {
+		log.Debug("failed to get BlockInterval when tryWaitProposalDoneWhenStopping")
+	}
+	if startBlock > currentBlock && ((startBlock-currentBlock)*blockInterval/1000) > *w.config.MaxWaitProposalInSecs {
 		log.Warn("the next proposal start block is too far, just skip waiting")
 		return
 	}
 
 	// wait one more block for safety
-	waitSecs := (endBlock - currentBlock + 1) * posa.BlockInterval()
+	waitSecs := (endBlock - currentBlock + 1) * blockInterval / 1000
 	log.Info("The miner will propose in later, waiting for the proposal to be done",
 		"currentBlock", currentBlock, "nextProposalStart", startBlock, "nextProposalEnd", endBlock, "waitTime", waitSecs)
 	time.Sleep(time.Duration(waitSecs) * time.Second)
